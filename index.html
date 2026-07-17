@@ -584,6 +584,17 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
   const [slotId, setSlotId] = useState(null);
   const [form, setForm] = useState({ name: "", phone: "", address: "", pincode: "", pay: "cod" });
   const [err, setErr] = useState("");
+  const [locBusy, setLocBusy] = useState(false);
+
+  const captureLoc = () => {
+    if (!navigator.geolocation) return setErr("GPS not supported on this device — you can continue without it.");
+    setLocBusy(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { setForm((f) => ({ ...f, loc: { lat: +pos.coords.latitude.toFixed(6), lng: +pos.coords.longitude.toFixed(6) } })); setLocBusy(false); setErr(""); },
+      () => { setLocBusy(false); setErr("Couldn't get GPS — allow location access in your browser, or continue without it."); },
+      { enableHighAccuracy: true, timeout: 9000 }
+    );
+  };
 
   const now = new Date();
   const slotState = (s) => {
@@ -642,6 +653,10 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
         <input placeholder="Phone (10 digits)" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} style={inp} />
         <textarea placeholder="Full address — flat, block, apartment, street" rows={2} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} style={{ ...inp, resize: "vertical" }} />
         <input placeholder="Pincode" value={form.pincode} onChange={(e) => setForm({ ...form, pincode: e.target.value })} style={inp} />
+        <button onClick={captureLoc} type="button"
+          style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, border: "2px dashed " + (form.loc ? "#177245" : BRAND.green), background: form.loc ? "#EAF6EE" : "#FDF7F1", color: form.loc ? "#177245" : BRAND.green, borderRadius: 10, padding: "11px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+          📍 {locBusy ? "Getting your location…" : form.loc ? "Location captured ✓ — helps our rider find you" : "Share exact GPS location (optional)"}
+        </button>
       </div>
 
       <SectionLabel n="3" t="Payment" />
