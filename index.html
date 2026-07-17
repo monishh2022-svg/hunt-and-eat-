@@ -24,6 +24,15 @@
 ===================================================================== */
 const FIREBASE_CONFIG = null;
 
+/* ============ PLAN B: REALTIME DATABASE (always free) ============
+   If Firestore asks for billing, use Firebase "Realtime Database"
+   instead. Create it (Build -> Realtime Database), copy its URL
+   (looks like https://hunt-and-eat-default-rtdb.asia-southeast1.firebasedatabase.app)
+   and paste it between the quotes below. Leave FIREBASE_CONFIG = null.
+================================================================== */
+const FIREBASE_RTDB_URL = null; // e.g. "https://hunt-and-eat-default-rtdb.asia-southeast1.firebasedatabase.app"
+
+
 let __db = null;
 if (FIREBASE_CONFIG) {
   firebase.initializeApp(FIREBASE_CONFIG);
@@ -31,7 +40,26 @@ if (FIREBASE_CONFIG) {
 }
 /* storage shim — if a native storage API already exists (e.g. Claude preview),
    keep it; otherwise use Firebase or this browser's local storage */
-window.storage = (window.storage && window.storage.get) ? window.storage : {
+function __rtdbUrl(key) {
+  return FIREBASE_RTDB_URL.replace(/\/+$/, "") + "/huntandeat/" + encodeURIComponent(key) + ".json";
+}
+window.storage = (window.storage && window.storage.get) ? window.storage :
+FIREBASE_RTDB_URL ? {
+  async get(key, shared) {
+    const r = await fetch(__rtdbUrl(key));
+    const v = await r.json();
+    return v == null ? null : { key, value: v, shared: true };
+  },
+  async set(key, value, shared) {
+    await fetch(__rtdbUrl(key), { method: "PUT", body: JSON.stringify(value) });
+    return { key, value, shared: true };
+  },
+  async delete(key) {
+    await fetch(__rtdbUrl(key), { method: "DELETE" });
+    return { key, deleted: true };
+  },
+  async list() { return { keys: [] }; },
+} : {
   async get(key, shared) {
     if (__db) {
       const d = await __db.collection("huntandeat").doc(key).get();
@@ -141,7 +169,7 @@ const DEFAULT_SETTINGS = {
   deliveryFee: 49,
   freeAbove: 999,
   pincodes: "603202, 603203, 603209, 600048, 600073, 603210",
-  phone: "+91 80152 74571",
+  phone: "+91 84389 05628",
   cutoffHours: 2,
   adminPin: "1234",
 };
@@ -195,8 +223,9 @@ const imgOf = (p) => p.img || IMGS[p.id];
 
 function ProductImage({ p, height = 120, fontSize = 52 }) {
   return (
-    <div style={{ background: BRAND.goldSoft, height, display: "grid", placeItems: "center", fontSize, position: "relative", overflow: "hidden" }}>
-      <span>{p.emoji}</span>
+    <div style={{ background: "linear-gradient(135deg,#FAF1E2,#F3DFC8)", height, display: "grid", placeItems: "center", fontSize, position: "relative", overflow: "hidden" }}>
+      <div style={{ position: "absolute", right: -8, bottom: -10, opacity: 0.13 }}><Logo size={Math.round(height * 0.95)} /></div>
+      <span style={{ position: "relative" }}>{p.emoji}</span>
       {imgOf(p) && (
         <img src={imgOf(p)} alt={p.name} loading="lazy"
           onError={(e) => { e.currentTarget.style.display = "none"; }}
@@ -248,14 +277,14 @@ function App() {
 
   useEffect(() => {
     (async () => {
-      const data = await loadKey("huntandeat-core", null);
+      const data = await loadKey("huntandeat-core-v2", null);
       if (data) {
         setProducts(data.products || DEFAULT_PRODUCTS);
         setSlots(data.slots || DEFAULT_SLOTS);
         setSettings({ ...DEFAULT_SETTINGS, ...(data.settings || {}) });
       } else {
         // first run: publish the default catalog so the admin app sees it too
-        saveKey("huntandeat-core", { products: DEFAULT_PRODUCTS, slots: DEFAULT_SLOTS, settings: DEFAULT_SETTINGS });
+        saveKey("huntandeat-core-v2", { products: DEFAULT_PRODUCTS, slots: DEFAULT_SLOTS, settings: DEFAULT_SETTINGS });
       }
       const ord = await loadKey("huntandeat-orders", []);
       setOrders(ord);
@@ -273,17 +302,17 @@ function App() {
 
   if (!loaded) {
     return (
-      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: BRAND.cream, fontFamily: "'Inter',sans-serif" }}>
+      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: BRAND.cream, fontFamily: "'Nunito',sans-serif" }}>
         <div style={{ textAlign: "center" }}><Logo size={60} /><div style={{ fontWeight: 700, color: BRAND.green, marginTop: 8 }}>Loading fresh stock…</div></div>
       </div>
     );
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: BRAND.cream, fontFamily: "'Inter','Segoe UI',system-ui,sans-serif", color: BRAND.ink }}>
+    <div style={{ minHeight: "100vh", background: BRAND.cream, fontFamily: "'Nunito','Segoe UI',system-ui,sans-serif", color: BRAND.ink }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=Caveat:wght@600;700&family=Inter:wght@400;500;600;700&display=swap');
-        .display { font-family: 'Playfair Display', Georgia, serif; }
+        @import url('https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Nunito:wght@400;600;700;800&family=Caveat:wght@600;700&display=swap');
+        .display { font-family: 'Baloo 2', 'Trebuchet MS', sans-serif; }
         .script { font-family: 'Caveat', cursive; }
         * { -webkit-tap-highlight-color: transparent; }
         ::-webkit-scrollbar { height: 6px; width: 8px; }
@@ -515,11 +544,11 @@ function ProductCard({ p, qty, add, onOpen }) {
         <div style={{ marginTop: "auto", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
             {p.mrp > p.price && <span style={{ textDecoration: "line-through", color: "#a39e93", fontSize: 12, marginRight: 6 }}>{rup(p.mrp)}</span>}
-            <span style={{ fontWeight: 800, fontSize: 16 }}>{rup(p.price)}</span>
+            <span style={{ fontWeight: 800, fontSize: 16, color: BRAND.green }}>{rup(p.price)}</span>
           </div>
           {p.stock ? (
             qty === 0 ? (
-              <button onClick={() => add(p.id, 1)} style={{ background: BRAND.green, color: "#fff", border: "none", borderRadius: 9, padding: "8px 18px", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>Add</button>
+              <button onClick={() => add(p.id, 1)} style={{ background: BRAND.green, color: "#fff", border: "none", borderRadius: 999, padding: "8px 20px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>Add</button>
             ) : <Stepper qty={qty} add={(d) => add(p.id, d)} />
           ) : <span style={{ fontSize: 12, color: "#8a857a" }}>Notify me</span>}
         </div>
