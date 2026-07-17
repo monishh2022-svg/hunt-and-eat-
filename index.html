@@ -1,0 +1,677 @@
+import React, { useState, useEffect, useMemo } from "react";
+
+/* ================= HUNT & EAT — Farm-to-Home Country Chicken =================
+   CUSTOMER STOREFRONT ONLY — no admin access here.
+   Manage orders/menu/slots from the separate "hunt-eat-admin" dashboard app,
+   which auto-syncs with this store through shared data.
+============================================================================ */
+
+/* Palette from the Hunt & Eat logo + poster: crimson red, light cream, dark ink,
+   with the poster's green reserved for freshness accents */
+const BRAND = {
+  green: "#A6212E",      // primary crimson (buttons, header)
+  greenDark: "#7A1520",  // deep crimson
+  gold: "#FBF3E4",       // light cream (CTA on red)
+  goldSoft: "#F6EADB",   // soft cream (tiles)
+  cream: "#FDFAF4",      // page background
+  red: "#8E1B25",        // badges / errors
+  ink: "#241E1A",
+  fresh: "#3E7C3A",      // poster's green script accent
+};
+
+const CATEGORIES = [
+  { id: "all", name: "All", ta: "அனைத்தும்", icon: "🛒" },
+  { id: "chicken", name: "Country Chicken", ta: "நாட்டுக்கோழி", icon: "🐓" },
+  { id: "cuts", name: "Cuts & Boneless", ta: "வெட்டு வகைகள்", icon: "🔪" },
+  { id: "eggs", name: "Country Eggs", ta: "நாட்டு முட்டை", icon: "🥚" },
+  { id: "quail", name: "Quail & Kadaknath", ta: "காடை / கருங்கோழி", icon: "🐦" },
+  { id: "rtc", name: "Ready to Cook", ta: "மேரினேட்", icon: "🍛" },
+  { id: "combo", name: "Combos", ta: "காம்போ", icon: "🎁" },
+];
+
+const DEFAULT_PRODUCTS = [
+  { id: "p1", cat: "chicken", name: "Naattu Kozhi — Whole Bird (Live Cut)", pcs: "1 Bird", gross: "1.1 – 1.3 Kg", net: "800 – 950 Gms", mrp: 720, price: 650, stock: true, emoji: "🐓", desc: "Free-range country chicken, cut only after you order. Skin-on, cleaned, with liver & gizzard." },
+  { id: "p2", cat: "cuts", name: "Naattu Kozhi Curry Cut (Skin On) — 500g", pcs: "12 – 14 Pcs", gross: "500 Gms", net: "480 – 500 Gms", mrp: 420, price: 380, stock: true, emoji: "🍗", desc: "Medium curry-cut pieces, perfect for kuzhambu and pepper fry." },
+  { id: "p3", cat: "cuts", name: "Naattu Kozhi Curry Cut — Family Pack 1 Kg", pcs: "24 – 28 Pcs", gross: "1 Kg", net: "960 – 1000 Gms", mrp: 800, price: 720, stock: true, emoji: "🍗", desc: "Full-bird curry cut for family meals and weekend biryani." },
+  { id: "p4", cat: "cuts", name: "Naattu Kozhi Boneless — 450g", pcs: "10 – 12 Pcs", gross: "450 Gms", net: "430 – 450 Gms", mrp: 520, price: 460, stock: true, emoji: "🥩", desc: "Hand-deboned, ideal for gravies, tikka and stir-fry." },
+  { id: "p5", cat: "cuts", name: "Country Chicken Drumsticks", pcs: "6 Pcs", gross: "420 – 480 Gms", net: "400 – 450 Gms", mrp: 380, price: 340, stock: true, emoji: "🍖", desc: "Meaty leg pieces — grill, roast or fry." },
+  { id: "p6", cat: "cuts", name: "Liver & Gizzard Combo — 250g", pcs: "8 – 10 Pcs", gross: "250 Gms", net: "240 – 250 Gms", mrp: 150, price: 120, stock: true, emoji: "🫘", desc: "Fresh naattu kozhi liver and gizzard, cleaned and cut." },
+  { id: "p7", cat: "eggs", name: "Naattu Muttai — Country Eggs (6 Pack)", pcs: "6 Eggs", gross: "—", net: "—", mrp: 110, price: 90, stock: true, emoji: "🥚", desc: "Brown-shell free-range eggs from our partner farms." },
+  { id: "p8", cat: "eggs", name: "Naattu Muttai — Country Eggs (12 Pack)", pcs: "12 Eggs", gross: "—", net: "—", mrp: 210, price: 170, stock: true, emoji: "🥚", desc: "Dozen pack of farm-fresh country eggs." },
+  { id: "p9", cat: "quail", name: "Kadaknath — Whole Bird", pcs: "1 Bird", gross: "900 Gms – 1.1 Kg", net: "700 – 850 Gms", mrp: 1150, price: 1050, stock: true, emoji: "🐔", desc: "The prized black chicken — rich, lean and high in protein." },
+  { id: "p10", cat: "quail", name: "Kaadai — Quail (Pair)", pcs: "2 Birds", gross: "350 – 400 Gms", net: "300 – 350 Gms", mrp: 300, price: 260, stock: true, emoji: "🐦", desc: "Cleaned whole quail, ready for pepper roast." },
+  { id: "p11", cat: "quail", name: "Quail Eggs (12 Pack)", pcs: "12 Eggs", gross: "—", net: "—", mrp: 100, price: 80, stock: true, emoji: "🪺", desc: "Delicate quail eggs — boil, fry or add to soups." },
+  { id: "p12", cat: "rtc", name: "Chettinad Pepper Marinade — Curry Cut 500g", pcs: "12 – 14 Pcs", gross: "500 Gms", net: "480 – 500 Gms", mrp: 480, price: 430, stock: true, emoji: "🌶️", desc: "Curry cut marinated in stone-ground Chettinad pepper masala." },
+  { id: "p13", cat: "rtc", name: "Rasam Cut — Turmeric & Ginger 400g", pcs: "10 – 12 Pcs", gross: "400 Gms", net: "380 – 400 Gms", mrp: 340, price: 300, stock: true, emoji: "🍲", desc: "Bone-in soup cut with turmeric-ginger rub, for kozhi rasam." },
+  { id: "p14", cat: "combo", name: "Weekend Feast — Whole Bird + 12 Eggs", pcs: "1 Bird + 12 Eggs", gross: "1.1 – 1.3 Kg + Eggs", net: "—", mrp: 890, price: 780, stock: true, emoji: "🎉", desc: "Sunday special: full live-cut bird with a dozen naattu muttai." },
+  { id: "p15", cat: "combo", name: "Biryani Kit — Curry Cut 1 Kg + Masala", pcs: "24 – 28 Pcs + Masala", gross: "1 Kg + 100g", net: "—", mrp: 900, price: 820, stock: true, emoji: "🍚", desc: "Family-pack curry cut with our house biryani masala pouch." },
+];
+
+const DEFAULT_SLOTS = [
+  { id: "s1", label: "6:00 AM – 8:00 AM", start: 6, capacity: 15, active: true },
+  { id: "s2", label: "8:00 AM – 10:00 AM", start: 8, capacity: 20, active: true },
+  { id: "s3", label: "10:00 AM – 12:00 PM", start: 10, capacity: 20, active: true },
+  { id: "s4", label: "4:00 PM – 6:00 PM", start: 16, capacity: 15, active: true },
+  { id: "s5", label: "6:00 PM – 8:00 PM", start: 18, capacity: 15, active: true },
+];
+
+const DEFAULT_SETTINGS = {
+  deliveryFee: 49,
+  freeAbove: 999,
+  pincodes: "603202, 603203, 603209, 600048, 600073, 603210",
+  phone: "+91 80152 74571",
+  cutoffHours: 2,
+  adminPin: "1234",
+};
+
+const STATUSES = ["Order received", "Cutting & cleaning", "Packed", "Out for delivery", "Delivered"];
+
+const rup = (n) => "₹" + Number(n).toLocaleString("en-IN");
+
+/* Archer-with-fork-arrow mark, recreated from the Hunt & Eat logo */
+function Logo({ size = 44, color = BRAND.green }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 100 100" fill="none" aria-label="Hunt & Eat logo">
+      {/* bow arc */}
+      <path d="M38 20 C72 14, 92 44, 74 78" stroke={color} strokeWidth="6" strokeLinecap="round" fill="none" />
+      {/* bowstring */}
+      <path d="M39 21 L47 52 L73 77" stroke={color} strokeWidth="2.6" fill="none" />
+      {/* arrow shaft */}
+      <path d="M22 60 L82 34" stroke={color} strokeWidth="6" strokeLinecap="round" />
+      {/* arrowhead */}
+      <path d="M82 34 L70 32 L76 42 Z" fill={color} />
+      {/* fork tail */}
+      <g stroke={color} strokeWidth="4" strokeLinecap="round">
+        <path d="M22 60 L12 54" /><path d="M22 60 L11 60" /><path d="M22 60 L13 67" />
+      </g>
+      {/* archer: head, cap, torso, arm */}
+      <circle cx="34" cy="30" r="8.5" fill={color} />
+      <path d="M27 24 q7 -6 14 -1" stroke={color} strokeWidth="4" fill="none" strokeLinecap="round" />
+      <path d="M22 44 q12 -6 24 -2 L52 50 q-14 10 -14 26 q-16 2 -22 -8 q-4 -14 6 -24 Z" fill={color} />
+      <path d="M24 47 L52 41" stroke={color} strokeWidth="9" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/* Stock images for the menu (falls back to the emoji tile if a photo fails to load) */
+const IMGS = {
+  p1: "https://images.unsplash.com/photo-1587593810167-a84920ea0781?w=500&q=70",
+  p2: "https://images.unsplash.com/photo-1602470520998-f4a52199a3d6?w=500&q=70",
+  p3: "https://images.unsplash.com/photo-1588347818036-558601350947?w=500&q=70",
+  p4: "https://images.unsplash.com/photo-1604503468506-a8da13d82791?w=500&q=70",
+  p5: "https://images.unsplash.com/photo-1606728035253-49e8a23146de?w=500&q=70",
+  p7: "https://images.unsplash.com/photo-1582722872445-44dc5f7e3c8f?w=500&q=70",
+  p8: "https://images.unsplash.com/photo-1598965402089-897ce52e8355?w=500&q=70",
+  p9: "https://images.unsplash.com/photo-1548550023-2bdb3c5beed7?w=500&q=70",
+  p11: "https://images.unsplash.com/photo-1612871689353-cccf581d667b?w=500&q=70",
+  p12: "https://images.unsplash.com/photo-1603360946369-dc9bb6258143?w=500&q=70",
+  p13: "https://images.unsplash.com/photo-1547592166-23ac45744acd?w=500&q=70",
+  p14: "https://images.unsplash.com/photo-1587593810167-a84920ea0781?w=500&q=70",
+  p15: "https://images.unsplash.com/photo-1589302168068-964664d93dc0?w=500&q=70",
+};
+const imgOf = (p) => p.img || IMGS[p.id];
+
+function ProductImage({ p, height = 120, fontSize = 52 }) {
+  return (
+    <div style={{ background: BRAND.goldSoft, height, display: "grid", placeItems: "center", fontSize, position: "relative", overflow: "hidden" }}>
+      <span>{p.emoji}</span>
+      {imgOf(p) && (
+        <img src={imgOf(p)} alt={p.name} loading="lazy"
+          onError={(e) => { e.currentTarget.style.display = "none"; }}
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+      )}
+    </div>
+  );
+}
+
+function nextDays(n) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() + i);
+    out.push({
+      key: d.toISOString().slice(0, 10),
+      label: i === 0 ? "Today" : i === 1 ? "Tomorrow" : d.toLocaleDateString("en-IN", { weekday: "short" }),
+      sub: d.toLocaleDateString("en-IN", { day: "numeric", month: "short" }),
+    });
+  }
+  return out;
+}
+
+/* ---------------- storage (SHARED: one store, all visitors see the same
+   catalog & settings; orders flow to the separate admin dashboard) -------- */
+async function loadKey(key, fallback) {
+  try {
+    const r = await window.storage.get(key, true);
+    return r ? JSON.parse(r.value) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+async function saveKey(key, val) {
+  try {
+    await window.storage.set(key, JSON.stringify(val), true);
+  } catch (e) {
+    console.error("save failed", key, e);
+  }
+}
+
+/* ================================ APP ================================ */
+export default function App() {
+  const [products, setProducts] = useState(DEFAULT_PRODUCTS);
+  const [slots, setSlots] = useState(DEFAULT_SLOTS);
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [orders, setOrders] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const data = await loadKey("huntandeat-core", null);
+      if (data) {
+        setProducts(data.products || DEFAULT_PRODUCTS);
+        setSlots(data.slots || DEFAULT_SLOTS);
+        setSettings({ ...DEFAULT_SETTINGS, ...(data.settings || {}) });
+      } else {
+        // first run: publish the default catalog so the admin app sees it too
+        saveKey("huntandeat-core", { products: DEFAULT_PRODUCTS, slots: DEFAULT_SLOTS, settings: DEFAULT_SETTINGS });
+      }
+      const ord = await loadKey("huntandeat-orders", []);
+      setOrders(ord);
+      setLoaded(true);
+    })();
+  }, []);
+
+  // customer app only ever APPENDS orders — it never edits catalog/settings
+  const placeOrder = async (o) => {
+    const latest = await loadKey("huntandeat-orders", []);
+    const next = [o, ...latest];
+    setOrders(next);
+    await saveKey("huntandeat-orders", next);
+  };
+
+  if (!loaded) {
+    return (
+      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: BRAND.cream, fontFamily: "'Inter',sans-serif" }}>
+        <div style={{ textAlign: "center" }}><Logo size={60} /><div style={{ fontWeight: 700, color: BRAND.green, marginTop: 8 }}>Loading fresh stock…</div></div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", background: BRAND.cream, fontFamily: "'Inter','Segoe UI',system-ui,sans-serif", color: BRAND.ink }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=Caveat:wght@600;700&family=Inter:wght@400;500;600;700&display=swap');
+        .display { font-family: 'Playfair Display', Georgia, serif; }
+        .script { font-family: 'Caveat', cursive; }
+        * { -webkit-tap-highlight-color: transparent; }
+        ::-webkit-scrollbar { height: 6px; width: 8px; }
+        ::-webkit-scrollbar-thumb { background: #d8d2c4; border-radius: 4px; }
+        .fadeup { animation: fadeup .35s ease both; }
+        @keyframes fadeup { from { opacity: 0; transform: translateY(8px);} to { opacity: 1; transform: none; } }
+        @media (prefers-reduced-motion: reduce) { .fadeup { animation: none; } }
+      `}</style>
+      <Shop products={products} slots={slots} settings={settings} orders={orders} onPlaceOrder={placeOrder} />
+    </div>
+  );
+}
+
+/* ================================ SHOP ================================ */
+function Shop({ products, slots, settings, orders, onPlaceOrder }) {
+  const [cat, setCat] = useState("all");
+  const [search, setSearch] = useState("");
+  const [cart, setCart] = useState({}); // id -> qty
+  const [cartOpen, setCartOpen] = useState(false);
+  const [checkout, setCheckout] = useState(false);
+  const [placed, setPlaced] = useState(null);
+  const [trackOpen, setTrackOpen] = useState(false);
+  const [detail, setDetail] = useState(null);
+
+  const visible = products.filter((p) =>
+    (cat === "all" || p.cat === cat) &&
+    p.name.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const cartItems = Object.entries(cart)
+    .map(([id, qty]) => ({ p: products.find((x) => x.id === id), qty }))
+    .filter((x) => x.p && x.qty > 0);
+  const subtotal = cartItems.reduce((s, x) => s + x.p.price * x.qty, 0);
+  const savings = cartItems.reduce((s, x) => s + (x.p.mrp - x.p.price) * x.qty, 0);
+  const delFee = subtotal >= settings.freeAbove || subtotal === 0 ? 0 : settings.deliveryFee;
+  const total = subtotal + delFee;
+  const count = cartItems.reduce((s, x) => s + x.qty, 0);
+
+  const add = (id, d) => setCart((c) => {
+    const q = Math.max(0, (c[id] || 0) + d);
+    const n = { ...c, [id]: q };
+    if (q === 0) delete n[id];
+    return n;
+  });
+
+  return (
+    <div>
+      {/* top strip — no admin access from the customer site */}
+      <div style={{ background: BRAND.greenDark, color: BRAND.goldSoft, fontSize: 12, padding: "6px 16px", textAlign: "center" }}>
+        🚜 Farm-to-home • Live cut only after you order • Same-day delivery • 📞 {settings.phone}
+      </div>
+
+      {/* header */}
+      <header style={{ background: BRAND.green, color: "#fff", padding: "14px 16px", position: "sticky", top: 0, zIndex: 30 }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 46, height: 46, borderRadius: 12, background: BRAND.gold, display: "grid", placeItems: "center" }}>
+              <Logo size={38} />
+            </div>
+            <div>
+              <div className="display" style={{ fontWeight: 800, fontSize: 21, lineHeight: 1 }}>Hunt & Eat</div>
+              <div style={{ fontSize: 9.5, color: BRAND.gold, letterSpacing: 2.5, fontWeight: 600 }}>THE FRESH AND ORIGINAL</div>
+            </div>
+          </div>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <input value={search} onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search naattu kozhi, eggs, quail…"
+              style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "none", outline: "none", fontSize: 14, background: "#fff", boxSizing: "border-box" }} />
+          </div>
+          <button onClick={() => setTrackOpen(true)} style={{ background: "transparent", border: "1px solid rgba(255,255,255,.35)", color: "#fff", borderRadius: 10, padding: "9px 14px", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Track order</button>
+          <button onClick={() => setCartOpen(true)} style={{ background: BRAND.gold, border: "none", color: BRAND.greenDark, borderRadius: 10, padding: "9px 16px", cursor: "pointer", fontWeight: 700, fontSize: 14 }}>
+            🧺 Cart{count > 0 ? ` · ${count}` : ""}
+          </button>
+        </div>
+      </header>
+
+      {/* hero — styled after the Hunt & Eat poster */}
+      <section style={{ background: `linear-gradient(180deg, #FDF8EE, ${BRAND.goldSoft})`, borderBottom: `4px solid ${BRAND.green}`, padding: "36px 16px 48px" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 320px" }} className="fadeup">
+            <div style={{ display: "inline-block", background: BRAND.green, color: "#fff", fontWeight: 700, fontSize: 12, borderRadius: 999, padding: "5px 14px", marginBottom: 14, letterSpacing: 0.5 }}>
+              100% FRESH • HYGIENIC • PREMIUM QUALITY
+            </div>
+            <h1 className="display" style={{ fontSize: 40, fontWeight: 800, margin: "0 0 4px", lineHeight: 1.1 }}>
+              <span style={{ color: BRAND.green }}>Fresh Meat.</span><br />
+              <span style={{ color: BRAND.ink }}>Real Taste.</span>
+            </h1>
+            <div style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink, letterSpacing: 1.5, margin: "8px 0 6px" }}>
+              CHICKEN &nbsp;|&nbsp; COUNTRY EGGS &nbsp;|&nbsp; QUAIL
+            </div>
+            <div className="script" style={{ fontSize: 26, color: BRAND.fresh, fontWeight: 700, lineHeight: 1.2 }}>
+              From Hunt to Home, Freshness You Can Trust! 🌿
+            </div>
+            <div style={{ marginTop: 14, fontSize: 14, fontWeight: 700, color: BRAND.green }}>
+              📞 Order now: {settings.phone} · ₹{settings.freeAbove}+ free delivery
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            {[["🛡️", "Hygienic & Safe"], ["🌿", "Freshly Prepared"], ["🚫", "No Preservatives"], ["🛵", "Fast Home Delivery"]].map(([e, t]) => (
+              <div key={t} style={{ background: "#fff", border: `1.5px solid ${BRAND.green}`, color: BRAND.greenDark, borderRadius: 12, padding: "12px 14px", fontSize: 13, minWidth: 130, fontWeight: 600, textAlign: "center" }}>
+                <div style={{ fontSize: 22 }}>{e}</div>{t}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* categories */}
+      <div style={{ maxWidth: 1100, margin: "-24px auto 0", padding: "0 16px" }}>
+        <div style={{ background: "#fff", borderRadius: 14, boxShadow: "0 4px 20px rgba(23,63,44,.10)", padding: 10, display: "flex", gap: 6, overflowX: "auto" }}>
+          {CATEGORIES.map((c) => (
+            <button key={c.id} onClick={() => setCat(c.id)}
+              style={{
+                flex: "0 0 auto", border: "none", cursor: "pointer", borderRadius: 10, padding: "10px 14px",
+                background: cat === c.id ? BRAND.green : "transparent", color: cat === c.id ? "#fff" : BRAND.ink,
+                fontWeight: 600, fontSize: 13, display: "flex", flexDirection: "column", alignItems: "center", gap: 2, minWidth: 92,
+              }}>
+              <span style={{ fontSize: 20 }}>{c.icon}</span>
+              {c.name}
+              <span style={{ fontSize: 10, opacity: 0.7 }}>{c.ta}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* products */}
+      <main style={{ maxWidth: 1100, margin: "0 auto", padding: "26px 16px 80px" }}>
+        <h2 className="display" style={{ fontSize: 22, fontWeight: 800, margin: "0 0 4px" }}>
+          {CATEGORIES.find((c) => c.id === cat)?.name}
+        </h2>
+        <p style={{ margin: "0 0 18px", fontSize: 13, color: "#6b675e" }}>Weights shown are gross before cleaning · net after cleaning, like-for-like with your local shop.</p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(230px,1fr))", gap: 16 }}>
+          {visible.map((p) => (
+            <ProductCard key={p.id} p={p} qty={cart[p.id] || 0} add={add} onOpen={() => setDetail(p)} />
+          ))}
+          {visible.length === 0 && <div style={{ gridColumn: "1/-1", textAlign: "center", color: "#8a857a", padding: 40 }}>No products found. Try a different search.</div>}
+        </div>
+      </main>
+
+      {/* footer */}
+      <footer>
+        <div style={{ background: BRAND.greenDark, color: "#F3DCD6", padding: "28px 16px", fontSize: 13 }}>
+          <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 16, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              <div style={{ background: BRAND.gold, borderRadius: 10, padding: 4 }}><Logo size={36} /></div>
+              <div>
+                <div className="display" style={{ color: "#fff", fontWeight: 800, fontSize: 17 }}>Hunt & Eat</div>
+                <div style={{ fontSize: 9, letterSpacing: 2, fontWeight: 700 }}>THE FRESH AND ORIGINAL</div>
+                <div style={{ marginTop: 4 }}>Farm-to-home naattu kozhi • Guduvanchery, Chennai · 📞 {settings.phone}</div>
+              </div>
+            </div>
+            <div>Serving pincodes: {settings.pincodes}</div>
+          </div>
+        </div>
+        <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "10px 16px", fontSize: 22 }}>
+          Goodness You Can Trust, Quality You Can Taste! 🌿
+        </div>
+      </footer>
+
+      {/* floating cart bar */}
+      {count > 0 && !cartOpen && !checkout && !placed && (
+        <div onClick={() => setCartOpen(true)} style={{ position: "fixed", bottom: 16, left: "50%", transform: "translateX(-50%)", background: BRAND.green, color: "#fff", borderRadius: 999, padding: "12px 22px", boxShadow: "0 8px 24px rgba(0,0,0,.25)", cursor: "pointer", zIndex: 40, display: "flex", gap: 14, alignItems: "center", fontWeight: 700 }}>
+          <span>{count} item{count > 1 ? "s" : ""} · {rup(subtotal)}</span>
+          <span style={{ background: BRAND.gold, color: BRAND.greenDark, borderRadius: 999, padding: "4px 14px", fontSize: 13 }}>View cart →</span>
+        </div>
+      )}
+
+      {detail && <DetailModal p={detail} qty={cart[detail.id] || 0} add={add} close={() => setDetail(null)} />}
+      {cartOpen && (
+        <Drawer title="Your basket" close={() => setCartOpen(false)}>
+          {cartItems.length === 0 ? (
+            <div style={{ textAlign: "center", color: "#8a857a", padding: "40px 0" }}>Your basket is empty.<br />Add some naattu kozhi to get started!</div>
+          ) : (
+            <>
+              {cartItems.map(({ p, qty }) => (
+                <div key={p.id} style={{ display: "flex", gap: 12, alignItems: "center", padding: "12px 0", borderBottom: "1px solid #eee7d9" }}>
+                  <div style={{ width: 46, height: 46, borderRadius: 10, overflow: "hidden", flexShrink: 0 }}><ProductImage p={p} height={46} fontSize={26} /></div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</div>
+                    <div style={{ fontSize: 12, color: "#8a857a" }}>{rup(p.price)} each</div>
+                  </div>
+                  <Stepper qty={qty} add={(d) => add(p.id, d)} />
+                  <div style={{ fontWeight: 700, minWidth: 64, textAlign: "right" }}>{rup(p.price * qty)}</div>
+                </div>
+              ))}
+              <div style={{ marginTop: 16, fontSize: 14 }}>
+                <Row l="Item total" r={rup(subtotal)} />
+                {savings > 0 && <Row l="You save" r={"− " + rup(savings)} green />}
+                <Row l="Delivery fee" r={delFee === 0 ? "FREE" : rup(delFee)} green={delFee === 0} />
+                {delFee > 0 && <div style={{ fontSize: 12, color: BRAND.red, margin: "4px 0" }}>Add {rup(settings.freeAbove - subtotal)} more for free delivery</div>}
+                <div style={{ borderTop: "2px solid " + BRAND.ink, marginTop: 8, paddingTop: 8 }}>
+                  <Row l={<b>To pay</b>} r={<b>{rup(total)}</b>} />
+                </div>
+              </div>
+              <button onClick={() => { setCartOpen(false); setCheckout(true); }}
+                style={{ width: "100%", marginTop: 16, background: BRAND.green, color: "#fff", border: "none", borderRadius: 12, padding: "14px", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>
+                Choose delivery slot →
+              </button>
+            </>
+          )}
+        </Drawer>
+      )}
+      {checkout && (
+        <Checkout cartItems={cartItems} subtotal={subtotal} delFee={delFee} total={total}
+          slots={slots} settings={settings} orders={orders}
+          back={() => { setCheckout(false); setCartOpen(true); }}
+          done={(order) => { onPlaceOrder(order); setCart({}); setCheckout(false); setPlaced(order); }} />
+      )}
+      {placed && <Success order={placed} settings={settings} close={() => setPlaced(null)} />}
+      {trackOpen && <Track orders={orders} close={() => setTrackOpen(false)} />}
+    </div>
+  );
+}
+
+function ProductCard({ p, qty, add, onOpen }) {
+  const off = Math.round(((p.mrp - p.price) / p.mrp) * 100);
+  return (
+    <div className="fadeup" style={{ background: "#fff", borderRadius: 14, overflow: "hidden", boxShadow: "0 2px 10px rgba(23,63,44,.07)", display: "flex", flexDirection: "column", opacity: p.stock ? 1 : 0.55 }}>
+      <div onClick={onOpen} style={{ cursor: "pointer", position: "relative" }}>
+        <ProductImage p={p} height={130} />
+        {off > 0 && <span style={{ position: "absolute", top: 8, left: 8, background: BRAND.red, color: "#fff", fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "2px 8px", zIndex: 2 }}>{off}% OFF</span>}
+        {!p.stock && <span style={{ position: "absolute", top: 8, right: 8, background: "#555", color: "#fff", fontSize: 11, borderRadius: 6, padding: "2px 8px", zIndex: 2 }}>Sold out</span>}
+      </div>
+      <div style={{ padding: 12, flex: 1, display: "flex", flexDirection: "column" }}>
+        <div onClick={onOpen} style={{ fontWeight: 600, fontSize: 14, cursor: "pointer", minHeight: 38 }}>{p.name}</div>
+        <div style={{ fontSize: 12, color: "#6b675e", margin: "6px 0" }}>
+          🔢 {p.pcs}{p.gross !== "—" && <> &nbsp;·&nbsp; ⚖️ {p.gross}</>}
+        </div>
+        <div style={{ marginTop: "auto", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            {p.mrp > p.price && <span style={{ textDecoration: "line-through", color: "#a39e93", fontSize: 12, marginRight: 6 }}>{rup(p.mrp)}</span>}
+            <span style={{ fontWeight: 800, fontSize: 16 }}>{rup(p.price)}</span>
+          </div>
+          {p.stock ? (
+            qty === 0 ? (
+              <button onClick={() => add(p.id, 1)} style={{ background: BRAND.green, color: "#fff", border: "none", borderRadius: 9, padding: "8px 18px", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>Add</button>
+            ) : <Stepper qty={qty} add={(d) => add(p.id, d)} />
+          ) : <span style={{ fontSize: 12, color: "#8a857a" }}>Notify me</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Stepper({ qty, add }) {
+  const b = { background: BRAND.green, color: "#fff", border: "none", width: 28, height: 28, borderRadius: 8, fontWeight: 800, cursor: "pointer", fontSize: 15 };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <button style={b} onClick={() => add(-1)}>−</button>
+      <span style={{ fontWeight: 700, minWidth: 16, textAlign: "center" }}>{qty}</span>
+      <button style={b} onClick={() => add(1)}>+</button>
+    </div>
+  );
+}
+
+function DetailModal({ p, qty, add, close }) {
+  return (
+    <Modal close={close}>
+      <div style={{ borderRadius: 12, overflow: "hidden" }}><ProductImage p={p} height={170} fontSize={72} /></div>
+      <h3 className="display" style={{ margin: "14px 0 6px", fontSize: 20, fontWeight: 800 }}>{p.name}</h3>
+      <p style={{ fontSize: 14, color: "#5c584e", margin: "0 0 12px" }}>{p.desc}</p>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 13, marginBottom: 14 }}>
+        <Info k="Pieces" v={p.pcs} /><Info k="Gross weight" v={p.gross} /><Info k="Net weight" v={p.net} /><Info k="Price" v={rup(p.price)} />
+      </div>
+      {qty === 0 ? (
+        <button onClick={() => add(p.id, 1)} style={{ width: "100%", background: BRAND.green, color: "#fff", border: "none", borderRadius: 12, padding: 13, fontWeight: 700, fontSize: 15, cursor: "pointer" }}>Add to basket — {rup(p.price)}</button>
+      ) : (
+        <div style={{ display: "flex", justifyContent: "center" }}><Stepper qty={qty} add={(d) => add(p.id, d)} /></div>
+      )}
+    </Modal>
+  );
+}
+const Info = ({ k, v }) => (
+  <div style={{ background: "#faf7f0", borderRadius: 8, padding: "8px 10px" }}>
+    <div style={{ fontSize: 11, color: "#8a857a" }}>{k}</div><div style={{ fontWeight: 600 }}>{v}</div>
+  </div>
+);
+const Row = ({ l, r, green }) => (
+  <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: green ? "#177245" : "inherit" }}>
+    <span>{l}</span><span>{r}</span>
+  </div>
+);
+
+/* ---------------- checkout ---------------- */
+function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders, back, done }) {
+  const days = nextDays(3);
+  const [day, setDay] = useState(days[0].key);
+  const [slotId, setSlotId] = useState(null);
+  const [form, setForm] = useState({ name: "", phone: "", address: "", pincode: "", pay: "cod" });
+  const [err, setErr] = useState("");
+
+  const now = new Date();
+  const slotState = (s) => {
+    if (!s.active) return { ok: false, why: "Unavailable" };
+    if (day === days[0].key && now.getHours() >= s.start - settings.cutoffHours) return { ok: false, why: "Cut-off passed" };
+    const booked = orders.filter((o) => o.slotDate === day && o.slotId === s.id && o.status !== "Cancelled").length;
+    if (booked >= s.capacity) return { ok: false, why: "Slot full" };
+    return { ok: true, left: s.capacity - booked };
+  };
+
+  const place = () => {
+    if (!form.name.trim() || !/^\d{10}$/.test(form.phone.replace(/\D/g, "").slice(-10)) || !form.address.trim() || !form.pincode.trim())
+      return setErr("Please fill name, a valid 10-digit phone, address and pincode.");
+    const serviceable = settings.pincodes.split(",").map((x) => x.trim());
+    if (!serviceable.includes(form.pincode.trim()))
+      return setErr(`Sorry, we don't deliver to ${form.pincode} yet. We serve: ${settings.pincodes}`);
+    if (!slotId) return setErr("Please pick a delivery slot.");
+    const slot = slots.find((s) => s.id === slotId);
+    const id = "HE" + Date.now().toString().slice(-6);
+    done({
+      id, items: cartItems.map(({ p, qty }) => ({ name: p.name, qty, price: p.price })),
+      subtotal, delFee, total, ...form,
+      slotDate: day, slotId, slotLabel: slot.label,
+      status: "Order received", placedAt: new Date().toISOString(),
+    });
+  };
+
+  return (
+    <Drawer title="Checkout" close={back} backLabel="← Basket">
+      <SectionLabel n="1" t="Delivery slot" />
+      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+        {days.map((d) => (
+          <button key={d.key} onClick={() => { setDay(d.key); setSlotId(null); }}
+            style={{ flex: 1, border: "2px solid " + (day === d.key ? BRAND.green : "#e5dfd0"), background: day === d.key ? BRAND.green : "#fff", color: day === d.key ? "#fff" : BRAND.ink, borderRadius: 10, padding: "8px 4px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+            {d.label}<div style={{ fontSize: 11, fontWeight: 500, opacity: 0.8 }}>{d.sub}</div>
+          </button>
+        ))}
+      </div>
+      <div style={{ display: "grid", gap: 8, marginBottom: 18 }}>
+        {slots.map((s) => {
+          const st = slotState(s);
+          const sel = slotId === s.id;
+          return (
+            <button key={s.id} disabled={!st.ok} onClick={() => setSlotId(s.id)}
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", border: "2px solid " + (sel ? BRAND.green : "#e5dfd0"), background: sel ? "#FCEFEA" : st.ok ? "#fff" : "#f3f0e8", borderRadius: 10, padding: "10px 14px", cursor: st.ok ? "pointer" : "not-allowed", fontSize: 14, fontWeight: 600, color: st.ok ? BRAND.ink : "#a39e93" }}>
+              <span>🕐 {s.label}</span>
+              <span style={{ fontSize: 12, fontWeight: 600 }}>{st.ok ? (st.left <= 5 ? `${st.left} left` : "Available") : st.why}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <SectionLabel n="2" t="Delivery details" />
+      <div style={{ display: "grid", gap: 8, marginBottom: 18 }}>
+        <input placeholder="Full name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={inp} />
+        <input placeholder="Phone (10 digits)" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} style={inp} />
+        <textarea placeholder="Full address — flat, block, apartment, street" rows={2} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} style={{ ...inp, resize: "vertical" }} />
+        <input placeholder="Pincode" value={form.pincode} onChange={(e) => setForm({ ...form, pincode: e.target.value })} style={inp} />
+      </div>
+
+      <SectionLabel n="3" t="Payment" />
+      <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
+        {[["cod", "💵 Cash on delivery"], ["upi", "📱 UPI on delivery (GPay / PhonePe)"]].map(([v, l]) => (
+          <label key={v} style={{ display: "flex", gap: 10, alignItems: "center", border: "2px solid " + (form.pay === v ? BRAND.green : "#e5dfd0"), borderRadius: 10, padding: "10px 14px", cursor: "pointer", fontSize: 14, fontWeight: 600, background: form.pay === v ? "#eef5f0" : "#fff" }}>
+            <input type="radio" checked={form.pay === v} onChange={() => setForm({ ...form, pay: v })} />{l}
+          </label>
+        ))}
+      </div>
+
+      <div style={{ background: "#faf7f0", borderRadius: 10, padding: "10px 14px", fontSize: 14, marginBottom: 14 }}>
+        <Row l="Item total" r={rup(subtotal)} />
+        <Row l="Delivery" r={delFee === 0 ? "FREE" : rup(delFee)} green={delFee === 0} />
+        <Row l={<b>To pay</b>} r={<b>{rup(total)}</b>} />
+      </div>
+      {err && <div style={{ color: BRAND.red, fontSize: 13, marginBottom: 10, fontWeight: 600 }}>{err}</div>}
+      <button onClick={place} style={{ width: "100%", background: BRAND.green, color: "#fff", border: "none", borderRadius: 12, padding: 14, fontWeight: 800, fontSize: 15, cursor: "pointer" }}>
+        Place order — {rup(total)}
+      </button>
+    </Drawer>
+  );
+}
+const inp = { padding: "11px 14px", borderRadius: 10, border: "1.5px solid #e5dfd0", fontSize: 14, outline: "none", fontFamily: "inherit", boxSizing: "border-box", width: "100%" };
+const SectionLabel = ({ n, t }) => (
+  <div style={{ display: "flex", gap: 8, alignItems: "center", margin: "0 0 10px" }}>
+    <span style={{ background: BRAND.green, color: "#fff", width: 22, height: 22, borderRadius: 999, display: "grid", placeItems: "center", fontSize: 12, fontWeight: 800 }}>{n}</span>
+    <span className="display" style={{ fontWeight: 800, fontSize: 16 }}>{t}</span>
+  </div>
+);
+
+function Success({ order, settings, close }) {
+  const waNumber = (settings?.phone || "").replace(/\D/g, "").slice(-10);
+  const waText = encodeURIComponent(
+    `🐓 *Hunt & Eat — New Order ${order.id}*\n` +
+    order.items.map((i) => `• ${i.name} ×${i.qty} — ${rup(i.price * i.qty)}`).join("\n") +
+    `\nTotal: *${rup(order.total)}* (${order.pay === "cod" ? "COD" : "UPI on delivery"})` +
+    `\nSlot: ${order.slotDate} · ${order.slotLabel}` +
+    `\nName: ${order.name} · 📞 ${order.phone}` +
+    `\nAddress: ${order.address}, ${order.pincode}`
+  );
+  return (
+    <Modal close={close}>
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 56 }}>✅</div>
+        <h3 className="display" style={{ fontWeight: 800, fontSize: 22, margin: "8px 0 4px" }}>Order placed!</h3>
+        <div style={{ fontSize: 14, color: "#5c584e" }}>Order ID</div>
+        <div className="display" style={{ fontSize: 26, fontWeight: 800, color: BRAND.green, letterSpacing: 1 }}>{order.id}</div>
+        <div style={{ background: "#faf7f0", borderRadius: 10, padding: 12, margin: "14px 0", fontSize: 14, textAlign: "left" }}>
+          <Row l="Slot" r={`${order.slotDate} · ${order.slotLabel}`} />
+          <Row l="Payment" r={order.pay === "cod" ? "Cash on delivery" : "UPI on delivery"} />
+          <Row l={<b>To pay</b>} r={<b>{rup(order.total)}</b>} />
+        </div>
+        <a href={`https://wa.me/91${waNumber}?text=${waText}`} target="_blank" rel="noreferrer"
+          style={{ display: "block", background: "#1FA855", color: "#fff", borderRadius: 12, padding: 13, fontWeight: 700, fontSize: 15, textDecoration: "none", marginBottom: 10 }}>
+          📲 Confirm on WhatsApp
+        </a>
+        <p style={{ fontSize: 12, color: "#8a857a", margin: "0 0 10px" }}>Tap above to send your order to our kitchen on WhatsApp — this confirms it fastest.</p>
+        <button onClick={close} style={{ width: "100%", background: BRAND.green, color: "#fff", border: "none", borderRadius: 12, padding: 13, fontWeight: 700, fontSize: 15, cursor: "pointer" }}>Continue shopping</button>
+      </div>
+    </Modal>
+  );
+}
+
+function Track({ orders, close }) {
+  const [q, setQ] = useState("");
+  const [found, setFound] = useState(null);
+  const search = () => {
+    const o = orders.find((x) => x.id.toLowerCase() === q.trim().toLowerCase() || x.phone.replace(/\D/g, "").endsWith(q.replace(/\D/g, "")) && q.trim().length >= 10);
+    setFound(o || "none");
+  };
+  return (
+    <Modal close={close}>
+      <h3 className="display" style={{ fontWeight: 800, fontSize: 20, margin: "0 0 4px" }}>🔍 Freshness Tracker</h3>
+      <p style={{ fontSize: 13, color: "#5c584e", margin: "0 0 12px" }}>Enter your order ID (e.g. HE123456) or phone number.</p>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Order ID or phone" style={{ ...inp, flex: 1 }} />
+        <button onClick={search} style={{ background: BRAND.green, color: "#fff", border: "none", borderRadius: 10, padding: "0 18px", fontWeight: 700, cursor: "pointer" }}>Track</button>
+      </div>
+      {found === "none" && <div style={{ color: BRAND.red, fontSize: 13, marginTop: 10 }}>No order found. Check the ID and try again.</div>}
+      {found && found !== "none" && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontWeight: 700, marginBottom: 10 }}>{found.id} · {rup(found.total)} · {found.slotLabel}</div>
+          {found.status === "Cancelled" ? (
+            <div style={{ color: BRAND.red, fontWeight: 700 }}>This order was cancelled.</div>
+          ) : STATUSES.map((s, i) => {
+            const idx = STATUSES.indexOf(found.status);
+            const on = i <= idx;
+            return (
+              <div key={s} style={{ display: "flex", gap: 10, alignItems: "center", padding: "6px 0" }}>
+                <span style={{ width: 22, height: 22, borderRadius: 999, background: on ? BRAND.green : "#e5dfd0", color: "#fff", display: "grid", placeItems: "center", fontSize: 12 }}>{on ? "✓" : ""}</span>
+                <span style={{ fontWeight: on ? 700 : 500, color: on ? BRAND.ink : "#a39e93" }}>{["📋", "🔪", "📦", "🛵", "🏠"][i]} {s}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+/* ---------------- shared UI ---------------- */
+function Drawer({ title, close, backLabel, children }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(14,43,29,.5)", zIndex: 50, display: "flex", justifyContent: "flex-end" }} onClick={close}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", width: "min(440px,100%)", height: "100%", overflowY: "auto", padding: 20, boxSizing: "border-box" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <h3 className="display" style={{ margin: 0, fontWeight: 800, fontSize: 20 }}>{title}</h3>
+          <button onClick={close} style={{ background: "#f0ece1", border: "none", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>{backLabel || "✕ Close"}</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+function Modal({ close, children }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(14,43,29,.5)", zIndex: 60, display: "grid", placeItems: "center", padding: 16 }} onClick={close}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, width: "min(420px,100%)", maxHeight: "90vh", overflowY: "auto", padding: 20, boxSizing: "border-box", position: "relative" }}>
+        <button onClick={close} style={{ position: "absolute", top: 10, right: 10, background: "#f0ece1", border: "none", borderRadius: 999, width: 30, height: 30, cursor: "pointer", fontWeight: 700 }}>✕</button>
+        {children}
+      </div>
+    </div>
+  );
+}
