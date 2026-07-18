@@ -47,11 +47,13 @@ window.storage = (window.storage && window.storage.get) ? window.storage :
 FIREBASE_RTDB_URL ? {
   async get(key, shared) {
     const r = await fetch(__rtdbUrl(key));
+    if (!r.ok) throw new Error("db read failed: " + r.status);
     const v = await r.json();
     return v == null ? null : { key, value: v, shared: true };
   },
   async set(key, value, shared) {
-    await fetch(__rtdbUrl(key), { method: "PUT", body: JSON.stringify(value) });
+    const r = await fetch(__rtdbUrl(key), { method: "PUT", body: JSON.stringify(value) });
+    if (!r.ok) throw new Error("db write failed: " + r.status);
     return { key, value, shared: true };
   },
   async delete(key) {
@@ -258,13 +260,17 @@ function App() {
 
   useEffect(() => {
     (async () => {
-      const data = await loadKey("huntandeat-core-v2", null);
+      let coreOk = true, data = null;
+      try {
+        const r = await window.storage.get("huntandeat-core-v2", true);
+        data = r ? JSON.parse(r.value) : null;
+      } catch { coreOk = false; } // read failed — use defaults locally, never overwrite the database
       if (data) {
         setProducts(data.products || DEFAULT_PRODUCTS);
         setSlots(data.slots || DEFAULT_SLOTS);
         setSettings({ ...DEFAULT_SETTINGS, ...(data.settings || {}) });
-      } else {
-        // first run: publish the default catalog so the admin app sees it too
+      } else if (coreOk) {
+        // database confirmed empty — true first run: publish defaults once
         saveKey("huntandeat-core-v2", { products: DEFAULT_PRODUCTS, slots: DEFAULT_SLOTS, settings: DEFAULT_SETTINGS });
       }
       const ord = await loadKey("huntandeat-orders", []);
@@ -298,6 +304,11 @@ function App() {
         * { -webkit-tap-highlight-color: transparent; }
         ::-webkit-scrollbar { height: 6px; width: 8px; }
         ::-webkit-scrollbar-thumb { background: #d8d2c4; border-radius: 4px; }
+        html { scroll-behavior: smooth; }
+        .card { transition: transform .22s ease, box-shadow .22s ease; }
+        .card:hover { transform: translateY(-4px); box-shadow: 0 14px 30px rgba(94,15,24,.14) !important; }
+        button, a { transition: filter .15s ease, transform .15s ease; }
+        button:active, a:active { transform: scale(.97); }
         .fadeup { animation: fadeup .35s ease both; }
         @keyframes fadeup { from { opacity: 0; transform: translateY(8px);} to { opacity: 1; transform: none; } }
         @media (prefers-reduced-motion: reduce) { .fadeup { animation: none; } }
@@ -341,60 +352,69 @@ function Shop({ products, slots, settings, orders, onPlaceOrder }) {
 
   return (
     <div>
-      {/* top strip — no admin access from the customer site */}
-      <div style={{ background: BRAND.greenDark, color: BRAND.goldSoft, fontSize: 12, padding: "6px 16px", textAlign: "center" }}>
-        🚜 Farm-to-home • Live cut only after you order • Same-day delivery • 📞 {settings.phone}
+      {/* announcement strip — slim, letter-spaced, no phone */}
+      <div style={{ background: "#5E0F18", color: "#E9C89B", fontSize: 10.5, padding: "7px 16px", textAlign: "center", letterSpacing: 2.4, fontWeight: 700 }}>
+        FARM-TO-HOME&nbsp;&nbsp;·&nbsp;&nbsp;LIVE CUT AFTER YOU ORDER&nbsp;&nbsp;·&nbsp;&nbsp;SAME-DAY DELIVERY
       </div>
 
       {/* header */}
-      <header style={{ background: BRAND.green, color: "#fff", padding: "14px 16px", position: "sticky", top: 0, zIndex: 30 }}>
-        <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 46, height: 46, borderRadius: 12, background: BRAND.gold, display: "grid", placeItems: "center" }}>
-              <Logo size={38} />
+      <header style={{ background: "linear-gradient(180deg, #A6212E 0%, #8A1722 100%)", color: "#fff", padding: "16px", position: "sticky", top: 0, zIndex: 30, boxShadow: "0 4px 18px rgba(94,15,24,.35)" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 54, height: 54, borderRadius: 16, background: "#FBF3E4", display: "grid", placeItems: "center", boxShadow: "0 0 0 2px rgba(233,200,155,.55), 0 4px 12px rgba(0,0,0,.25)" }}>
+              <Logo size={44} />
             </div>
             <div>
-              <div className="display" style={{ fontWeight: 800, fontSize: 21, lineHeight: 1 }}>Hunt & Eat</div>
-              <div style={{ fontSize: 9.5, color: BRAND.gold, letterSpacing: 2.5, fontWeight: 600 }}>THE FRESH AND ORIGINAL</div>
+              <div className="display" style={{ fontWeight: 800, fontSize: 24, lineHeight: 1.05, letterSpacing: 0.3, textShadow: "0 1px 2px rgba(0,0,0,.2)" }}>Hunt & Eat</div>
+              <div style={{ fontSize: 9, color: "#E9C89B", letterSpacing: 3.2, fontWeight: 700, marginTop: 3 }}>THE FRESH AND ORIGINAL</div>
             </div>
           </div>
-          <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ flex: 1, minWidth: 220 }}>
             <input value={search} onChange={(e) => setSearch(e.target.value)}
               placeholder="Search naattu kozhi, eggs, quail…"
-              style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "none", outline: "none", fontSize: 14, background: "#fff", boxSizing: "border-box" }} />
+              style={{ width: "100%", padding: "12px 20px", borderRadius: 999, border: "none", outline: "none", fontSize: 14, background: "#FFFDF8", boxSizing: "border-box", boxShadow: "inset 0 2px 6px rgba(94,15,24,.12)" }} />
           </div>
-          <button onClick={() => setTrackOpen(true)} style={{ background: "transparent", border: "1px solid rgba(255,255,255,.35)", color: "#fff", borderRadius: 10, padding: "9px 14px", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Track order</button>
-          <button onClick={() => setCartOpen(true)} style={{ background: BRAND.gold, border: "none", color: BRAND.greenDark, borderRadius: 10, padding: "9px 16px", cursor: "pointer", fontWeight: 700, fontSize: 14 }}>
-            🧺 Cart{count > 0 ? ` · ${count}` : ""}
-          </button>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <button onClick={() => setTrackOpen(true)} style={{ background: "transparent", border: "1.5px solid rgba(233,200,155,.55)", color: "#F3DCC0", borderRadius: 999, padding: "10px 18px", cursor: "pointer", fontSize: 13, fontWeight: 700, letterSpacing: 0.3 }}>Track order</button>
+            <button onClick={() => setCartOpen(true)} style={{ background: "linear-gradient(180deg, #F2CE8F, #E2AE5C)", border: "none", color: "#5E0F18", borderRadius: 999, padding: "10px 20px", cursor: "pointer", fontWeight: 800, fontSize: 14, boxShadow: "0 3px 10px rgba(0,0,0,.28)" }}>
+              🧺 Cart{count > 0 ? ` · ${count}` : ""}
+            </button>
+          </div>
         </div>
       </header>
 
       {/* hero — styled after the Hunt & Eat poster */}
-      <section style={{ background: `linear-gradient(180deg, #FDF8EE, ${BRAND.goldSoft})`, borderBottom: `4px solid ${BRAND.green}`, padding: "36px 16px 48px" }}>
+      <section style={{ background: "radial-gradient(1200px 400px at 18% -10%, #FFFDF6, transparent), linear-gradient(180deg, #FDF8EE, #F6EADB)", borderBottom: "1px solid #E9D9B8", padding: "44px 16px 52px" }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
           <div style={{ flex: "1 1 320px" }} className="fadeup">
-            <div style={{ display: "inline-block", background: BRAND.green, color: "#fff", fontWeight: 700, fontSize: 12, borderRadius: 999, padding: "5px 14px", marginBottom: 14, letterSpacing: 0.5 }}>
-              100% FRESH • HYGIENIC • PREMIUM QUALITY
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#FFFDF6", border: "1px solid #D9B96A", color: "#8E6A1F", fontWeight: 700, fontSize: 11, borderRadius: 999, padding: "6px 16px", marginBottom: 16, letterSpacing: 2 }}>
+              ★ 100% FRESH · HYGIENIC · PREMIUM QUALITY
             </div>
-            <h1 className="display" style={{ fontSize: 40, fontWeight: 800, margin: "0 0 4px", lineHeight: 1.1 }}>
+            <h1 className="display" style={{ fontSize: 46, fontWeight: 800, margin: "0 0 10px", lineHeight: 1.08, letterSpacing: -0.5 }}>
               <span style={{ color: BRAND.green }}>Fresh Meat.</span><br />
               <span style={{ color: BRAND.ink }}>Real Taste.</span>
             </h1>
-            <div style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink, letterSpacing: 1.5, margin: "8px 0 6px" }}>
-              CHICKEN &nbsp;|&nbsp; COUNTRY EGGS &nbsp;|&nbsp; QUAIL
+            <div style={{ width: 64, height: 3, background: "linear-gradient(90deg,#D9B96A,#B98A2E)", borderRadius: 2, margin: "0 0 12px" }} />
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: "#7a6a4f", letterSpacing: 2.4, margin: "0 0 8px" }}>
+              CHICKEN <span style={{ color: "#C9A24B" }}>◆</span> COUNTRY EGGS <span style={{ color: "#C9A24B" }}>◆</span> QUAIL
             </div>
             <div className="script" style={{ fontSize: 26, color: BRAND.fresh, fontWeight: 700, lineHeight: 1.2 }}>
               From Hunt to Home, Freshness You Can Trust! 🌿
             </div>
-            <div style={{ marginTop: 14, fontSize: 14, fontWeight: 700, color: BRAND.green }}>
-              📞 Order now: {settings.phone} · ₹{settings.freeAbove}+ free delivery
+            <div style={{ marginTop: 18, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+              <a href="#menu" style={{ background: "linear-gradient(180deg,#B32534,#8E1A26)", color: "#fff", borderRadius: 999, padding: "13px 26px", fontWeight: 800, fontSize: 14, textDecoration: "none", boxShadow: "0 6px 16px rgba(142,26,38,.35)", letterSpacing: 0.3 }}>
+                Order Fresh Today ↓
+              </a>
+              <a href={`tel:${settings.phone.replace(/\s/g, "")}`} style={{ border: "1.5px solid #B98A2E", color: "#8E6A1F", background: "#FFFDF6", borderRadius: 999, padding: "12px 22px", fontWeight: 700, fontSize: 13, textDecoration: "none" }}>
+                📞 {settings.phone}
+              </a>
+              <span style={{ fontSize: 12.5, color: "#7a6a4f", fontWeight: 600 }}>Free delivery above ₹{settings.freeAbove}</span>
             </div>
           </div>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
             {[["🛡️", "Hygienic & Safe"], ["🌿", "Freshly Prepared"], ["🚫", "No Preservatives"], ["🛵", "Fast Home Delivery"]].map(([e, t]) => (
-              <div key={t} style={{ background: "#fff", border: `1.5px solid ${BRAND.green}`, color: BRAND.greenDark, borderRadius: 12, padding: "12px 14px", fontSize: 13, minWidth: 130, fontWeight: 600, textAlign: "center" }}>
-                <div style={{ fontSize: 22 }}>{e}</div>{t}
+              <div key={t} style={{ background: "#FFFDF8", border: "1px solid #EADFC6", color: "#4a4237", borderRadius: 14, padding: "16px 14px", fontSize: 12, minWidth: 132, fontWeight: 700, textAlign: "center", boxShadow: "0 6px 18px rgba(94,60,20,.08)", letterSpacing: 0.6 }}>
+                <div style={{ fontSize: 24, marginBottom: 6 }}>{e}</div>{t.toUpperCase()}
               </div>
             ))}
           </div>
@@ -408,7 +428,7 @@ function Shop({ products, slots, settings, orders, onPlaceOrder }) {
             <button key={c.id} onClick={() => setCat(c.id)}
               style={{
                 flex: "0 0 auto", border: "none", cursor: "pointer", borderRadius: 10, padding: "10px 14px",
-                background: cat === c.id ? BRAND.green : "transparent", color: cat === c.id ? "#fff" : BRAND.ink,
+                background: cat === c.id ? "linear-gradient(180deg,#B32534,#8E1A26)" : "transparent", color: cat === c.id ? "#fff" : BRAND.ink, boxShadow: cat === c.id ? "0 4px 12px rgba(142,26,38,.30)" : "none",
                 fontWeight: 600, fontSize: 13, display: "flex", flexDirection: "column", alignItems: "center", gap: 2, minWidth: 92,
               }}>
               <span style={{ fontSize: 20 }}>{c.icon}</span>
@@ -420,8 +440,9 @@ function Shop({ products, slots, settings, orders, onPlaceOrder }) {
       </div>
 
       {/* products */}
-      <main style={{ maxWidth: 1100, margin: "0 auto", padding: "26px 16px 80px" }}>
-        <h2 className="display" style={{ fontSize: 22, fontWeight: 800, margin: "0 0 4px" }}>
+      <main id="menu" style={{ maxWidth: 1100, margin: "0 auto", padding: "34px 16px 80px" }}>
+        <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 3, color: "#B98A2E", marginBottom: 4 }}>OUR MENU · நாட்டுக்கோழி</div>
+        <h2 className="display" style={{ fontSize: 27, fontWeight: 800, margin: "0 0 4px" }}>
           {CATEGORIES.find((c) => c.id === cat)?.name}
         </h2>
         <p style={{ margin: "0 0 18px", fontSize: 13, color: "#6b675e" }}>Weights shown are gross before cleaning · net after cleaning, like-for-like with your local shop.</p>
@@ -435,7 +456,7 @@ function Shop({ products, slots, settings, orders, onPlaceOrder }) {
 
       {/* footer */}
       <footer>
-        <div style={{ background: BRAND.greenDark, color: "#F3DCD6", padding: "28px 16px", fontSize: 13 }}>
+        <div style={{ background: BRAND.greenDark, color: "#F3DCD6", padding: "30px 16px", fontSize: 13, borderTop: "3px solid #D9B96A" }}>
           <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 16, alignItems: "center" }}>
             <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
               <div style={{ background: BRAND.gold, borderRadius: 10, padding: 4 }}><Logo size={36} /></div>
@@ -511,7 +532,7 @@ function Shop({ products, slots, settings, orders, onPlaceOrder }) {
 function ProductCard({ p, qty, add, onOpen }) {
   const off = Math.round(((p.mrp - p.price) / p.mrp) * 100);
   return (
-    <div className="fadeup" style={{ background: "#fff", borderRadius: 14, overflow: "hidden", boxShadow: "0 2px 10px rgba(23,63,44,.07)", display: "flex", flexDirection: "column", opacity: p.stock ? 1 : 0.55 }}>
+    <div className="fadeup card" style={{ background: "#fff", borderRadius: 16, overflow: "hidden", boxShadow: "0 4px 14px rgba(94,15,24,.08)", border: "1px solid #F0E6D2", display: "flex", flexDirection: "column", opacity: p.stock ? 1 : 0.55 }}>
       <div onClick={onOpen} style={{ cursor: "pointer", position: "relative" }}>
         <ProductImage p={p} height={130} />
         {off > 0 && <span style={{ position: "absolute", top: 8, left: 8, background: BRAND.red, color: "#fff", fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "2px 8px", zIndex: 2 }}>{off}% OFF</span>}
