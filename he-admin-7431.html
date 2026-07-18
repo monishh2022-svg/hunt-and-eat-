@@ -47,11 +47,13 @@ window.storage = (window.storage && window.storage.get) ? window.storage :
 FIREBASE_RTDB_URL ? {
   async get(key, shared) {
     const r = await fetch(__rtdbUrl(key));
+    if (!r.ok) throw new Error("db read failed: " + r.status);
     const v = await r.json();
     return v == null ? null : { key, value: v, shared: true };
   },
   async set(key, value, shared) {
-    await fetch(__rtdbUrl(key), { method: "PUT", body: JSON.stringify(value) });
+    const r = await fetch(__rtdbUrl(key), { method: "PUT", body: JSON.stringify(value) });
+    if (!r.ok) throw new Error("db write failed: " + r.status);
     return { key, value, shared: true };
   },
   async delete(key) {
@@ -180,9 +182,11 @@ function AdminApp() {
   const [newOrders, setNewOrders] = useState(0);
 
   const refresh = async (silent) => {
-    const c = await loadKey("huntandeat-core-v2", null);
+    if (!silent) {
+      const c = await loadKey("huntandeat-core-v2", null);
+      if (c) setCore(c);
+    }
     const o = await loadKey("huntandeat-orders", []);
-    if (c) setCore(c);
     setOrders(o);
     setLastSync(new Date());
     if (silent && seenCount.current && o.length > seenCount.current) setNewOrders(o.length - seenCount.current);
@@ -197,10 +201,13 @@ function AdminApp() {
 
   const saveCore = async (patch) => {
     setSaving(true);
-    const next = { ...core, ...patch };
+    let latest = null;
+    try { latest = await loadKey("huntandeat-core-v2", null); } catch {}
+    const next = { ...(latest || core || {}), ...patch };
     setCore(next);
-    await saveKey("huntandeat-core-v2", next);
+    const ok = await saveKey("huntandeat-core-v2", next);
     setSaving(false);
+    if (!ok) alert("⚠️ Save did NOT reach the database (internet or database issue). Your change is not published — please try again.");
   };
   const saveOrders = async (next) => {
     setOrders(next);
