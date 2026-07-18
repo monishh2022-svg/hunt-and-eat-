@@ -572,13 +572,14 @@ function Slots({ slots, save }) {
 }
 
 /* ---------------- Settings ---------------- */
+const Field = ({ l, children }) => (
+  <label style={{ display: "grid", gap: 4, fontSize: 13, fontWeight: 600 }}>{l}{children}</label>
+);
+
 function Settings({ settings, save }) {
   const [f, setF] = useState(settings);
   const [saved, setSaved] = useState(false);
   useEffect(() => setF(settings), [settings]);
-  const Field = ({ l, children }) => (
-    <label style={{ display: "grid", gap: 4, fontSize: 13, fontWeight: 600 }}>{l}{children}</label>
-  );
   return (
     <div style={{ maxWidth: 480, display: "grid", gap: 10 }}>
       <Field l="Delivery fee (₹)"><input style={inp} type="number" value={f.deliveryFee} onChange={(e) => setF({ ...f, deliveryFee: Number(e.target.value) })} /></Field>
