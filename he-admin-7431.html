@@ -257,7 +257,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"}</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v2.1</span>
           <button onClick={() => { refresh(false); setNewOrders(0); }} style={{ background: BRAND.cream, color: BRAND.redDark, border: "none", borderRadius: 8, padding: "6px 12px", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>↻ Sync now</button>
         </div>
       </header>
