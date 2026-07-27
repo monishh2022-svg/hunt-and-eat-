@@ -4,6 +4,15 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Hunt & Eat — Fresh Country Chicken | Order Online</title>
+<link rel="manifest" href="./manifest.webmanifest" />
+<meta name="theme-color" content="#A6212E" />
+<link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+<link rel="icon" type="image/png" href="./icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<script>
+if ("serviceWorker" in navigator) { navigator.serviceWorker.register("./sw.js").catch(function(){}); }
+</script>
 <!-- React + Babel (compiles the app right in the browser — no build tools needed) -->
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
@@ -313,6 +322,8 @@ function App() {
         .card:hover { transform: translateY(-4px); box-shadow: 0 14px 30px rgba(94,15,24,.14) !important; }
         button, a { transition: filter .15s ease, transform .15s ease; }
         button:active, a:active { transform: scale(.97); }
+        .he-pin { font-size: 28px; line-height: 1; text-align: center; filter: drop-shadow(0 2px 3px rgba(0,0,0,.35)); cursor: grab; }
+        .leaflet-container { font-family: inherit; }
         @media (max-width: 640px) {
           .hdr { gap: 10px !important; }
           .brandname { font-size: 19px !important; }
@@ -623,6 +634,88 @@ const Row = ({ l, r, green }) => (
   </div>
 );
 
+const fieldLbl = { display: "grid", gap: 5, fontSize: 13, fontWeight: 700 };
+const Req = () => <span style={{ color: "#D33" }}> *</span>;
+const DEFAULT_PIN = { lat: 12.8438, lng: 80.0576 }; // Guduvanchery
+
+function ensureLeaflet() {
+  return new Promise((resolve, reject) => {
+    if (window.L) return resolve(window.L);
+    const css = document.createElement("link");
+    css.rel = "stylesheet";
+    css.href = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
+    document.head.appendChild(css);
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
+    s.onload = () => resolve(window.L);
+    s.onerror = () => reject(new Error("map load failed"));
+    document.head.appendChild(s);
+  });
+}
+
+function MapPicker({ initial, onSave, close }) {
+  const boxRef = useRef(null);
+  const mapRef = useRef(null);
+  const markRef = useRef(null);
+  const [pos, setPos] = useState(initial || null);
+  const [note, setNote] = useState("Loading map…");
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    ensureLeaflet().then((L) => {
+      if (!alive || !boxRef.current || mapRef.current) return;
+      const start = initial || DEFAULT_PIN;
+      const map = L.map(boxRef.current).setView([start.lat, start.lng], initial ? 17 : 14);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+      const icon = L.divIcon({ html: "📍", className: "he-pin", iconSize: [32, 32], iconAnchor: [16, 30] });
+      const marker = L.marker([start.lat, start.lng], { draggable: true, icon }).addTo(map);
+      const upd = (ll) => setPos({ lat: +ll.lat.toFixed(6), lng: +ll.lng.toFixed(6) });
+      marker.on("dragend", () => upd(marker.getLatLng()));
+      map.on("click", (e) => { marker.setLatLng(e.latlng); upd(e.latlng); });
+      mapRef.current = map; markRef.current = marker;
+      setNote(""); if (!initial) setPos({ lat: start.lat, lng: start.lng });
+      setTimeout(() => map.invalidateSize(), 250);
+    }).catch(() => { setFailed(true); setNote(""); });
+    return () => { alive = false; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; } };
+  }, []);
+
+  const locateMe = () => {
+    if (!navigator.geolocation) return setNote("GPS not supported on this device.");
+    setNote("Finding your location…");
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        const ll = { lat: +p.coords.latitude.toFixed(6), lng: +p.coords.longitude.toFixed(6) };
+        setPos(ll); setNote("");
+        if (mapRef.current && markRef.current) { mapRef.current.setView([ll.lat, ll.lng], 17); markRef.current.setLatLng([ll.lat, ll.lng]); }
+      },
+      () => setNote("Couldn't get GPS — allow location access, or drag the pin yourself."),
+      { enableHighAccuracy: true, timeout: 9000 }
+    );
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(14,10,8,.6)", zIndex: 70, display: "grid", placeItems: "center", padding: 12 }} onClick={close}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, width: "min(460px,100%)", padding: 16, boxSizing: "border-box" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <b className="display" style={{ fontSize: 18 }}>Pin your delivery location</b>
+          <button onClick={close} style={{ background: "#f0ece1", border: "none", borderRadius: 999, width: 30, height: 30, cursor: "pointer", fontWeight: 700 }}>✕</button>
+        </div>
+        <div style={{ fontSize: 12.5, color: "#6b675e", marginBottom: 8 }}>Drag the 📍 pin or tap the map to place it exactly at your gate or building entrance.</div>
+        {!failed && <div ref={boxRef} style={{ height: 300, width: "100%", borderRadius: 12, overflow: "hidden", border: "1px solid #E5DFD0", background: "#EFEAE0" }} />}
+        {failed && <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 10, padding: 12, fontSize: 13 }}>Map couldn't load (weak connection). You can still share your GPS location using the button below.</div>}
+        {note && <div style={{ fontSize: 12.5, color: BRAND.green, fontWeight: 700, marginTop: 8 }}>{note}</div>}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
+          <button onClick={locateMe} type="button" style={{ background: "#fff", border: "1.5px solid " + BRAND.green, color: BRAND.green, borderRadius: 10, padding: "11px 8px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>🎯 Use my GPS</button>
+          <button onClick={() => pos && onSave(pos)} type="button" disabled={!pos}
+            style={{ background: pos ? BRAND.green : "#ccc", color: "#fff", border: "none", borderRadius: 10, padding: "11px 8px", fontWeight: 800, fontSize: 13, cursor: pos ? "pointer" : "not-allowed" }}>✓ Confirm location</button>
+        </div>
+        {pos && <div style={{ fontSize: 11, color: "#8a857a", textAlign: "center", marginTop: 6 }}>Pin: {pos.lat}, {pos.lng}</div>}
+      </div>
+    </div>
+  );
+}
+
 /* ---------------- checkout ---------------- */
 function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders, back, done }) {
   const allowedDays = settings.deliveryDays && settings.deliveryDays.length ? settings.deliveryDays : [0];
@@ -637,6 +730,7 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
   const [form, setForm] = useState({ name: "", phone: "", address: "", pincode: "", pay: "cod" });
   const [err, setErr] = useState("");
   const [locBusy, setLocBusy] = useState(false);
+  const [mapOpen, setMapOpen] = useState(false);
 
   const captureLoc = () => {
     if (!navigator.geolocation) return setErr("GPS not supported on this device — you can continue without it.");
@@ -658,8 +752,11 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
   };
 
   const place = () => {
-    if (!form.name.trim() || !/^\d{10}$/.test(form.phone.replace(/\D/g, "").slice(-10)) || !form.address.trim() || !form.pincode.trim())
-      return setErr("Please fill name, a valid 10-digit phone, address and pincode.");
+    const ph = form.phone.replace(/\D/g, "").slice(-10);
+    if (!form.name.trim()) return setErr("Please enter your full name.");
+    if (!/^[6-9]\d{9}$/.test(ph)) return setErr("Please enter a valid 10-digit mobile number — it's required so our rider can reach you.");
+    if (!form.address.trim()) return setErr("Please enter your full delivery address.");
+    if (!/^\d{6}$/.test(form.pincode.trim())) return setErr("Please enter a valid 6-digit pincode.");
     const serviceable = settings.pincodes.split(",").map((x) => x.trim());
     if (!serviceable.includes(form.pincode.trim()))
       return setErr(`Sorry, we don't deliver to ${form.pincode} yet. We serve: ${settings.pincodes}`);
@@ -704,15 +801,52 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
       </div>
 
       <SectionLabel n="2" t="Delivery details" />
-      <div style={{ display: "grid", gap: 8, marginBottom: 18 }}>
-        <input placeholder="Full name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={inp} />
-        <input placeholder="Phone (10 digits)" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} style={inp} />
-        <textarea placeholder="Full address — flat, block, apartment, street" rows={2} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} style={{ ...inp, resize: "vertical" }} />
-        <input placeholder="Pincode" value={form.pincode} onChange={(e) => setForm({ ...form, pincode: e.target.value })} style={inp} />
-        <button onClick={captureLoc} type="button"
-          style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, border: "2px dashed " + (form.loc ? "#177245" : BRAND.green), background: form.loc ? "#EAF6EE" : "#FDF7F1", color: form.loc ? "#177245" : BRAND.green, borderRadius: 10, padding: "11px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-          📍 {locBusy ? "Getting your location…" : form.loc ? "Location captured ✓ — helps our rider find you" : "Share exact GPS location (optional)"}
-        </button>
+      <div style={{ fontSize: 11.5, color: "#8a857a", fontWeight: 600, margin: "-4px 0 10px" }}>
+        Fields marked <span style={{ color: "#D33", fontWeight: 800 }}>*</span> are required
+      </div>
+      <div style={{ display: "grid", gap: 12, marginBottom: 18 }}>
+        <label style={fieldLbl}>
+          <span>Full name<Req /></span>
+          <input placeholder="Your name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={inp} />
+        </label>
+
+        <label style={fieldLbl}>
+          <span>Mobile number<Req /></span>
+          <div style={{ display: "flex", alignItems: "stretch", border: "1.5px solid #e5dfd0", borderRadius: 10, overflow: "hidden", background: "#fff" }}>
+            <span style={{ background: "#F6EADB", padding: "0 13px", fontWeight: 800, fontSize: 14, color: BRAND.green, display: "flex", alignItems: "center", borderRight: "1.5px solid #e5dfd0" }}>+91</span>
+            <input inputMode="numeric" type="tel" maxLength={10} placeholder="10-digit mobile number" value={form.phone}
+              onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })}
+              style={{ ...inp, border: "none", borderRadius: 0, flex: 1, letterSpacing: 1 }} />
+          </div>
+          <span style={{ fontSize: 11.5, color: "#8a857a", fontWeight: 500 }}>Order updates and rider calls come to this number</span>
+        </label>
+
+        <label style={fieldLbl}>
+          <span>Full address<Req /></span>
+          <textarea placeholder="Flat / door no, block, apartment name, street, landmark" rows={2} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} style={{ ...inp, resize: "vertical" }} />
+        </label>
+
+        <label style={fieldLbl}>
+          <span>Pincode<Req /></span>
+          <input inputMode="numeric" maxLength={6} placeholder="6-digit pincode" value={form.pincode}
+            onChange={(e) => setForm({ ...form, pincode: e.target.value.replace(/\D/g, "").slice(0, 6) })} style={inp} />
+        </label>
+
+        <div style={{ display: "grid", gap: 5 }}>
+          <span style={{ fontSize: 13, fontWeight: 700 }}>Map location <span style={{ fontWeight: 500, color: "#8a857a", fontSize: 11.5 }}>(recommended — helps our rider reach you fast)</span></span>
+          {form.loc ? (
+            <div style={{ border: "2px solid #177245", background: "#EAF6EE", borderRadius: 10, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ fontWeight: 800, color: "#177245", fontSize: 13 }}>📍 Location pinned ✓</span>
+              <span style={{ fontSize: 11, color: "#5c584e" }}>{form.loc.lat}, {form.loc.lng}</span>
+              <button type="button" onClick={() => setMapOpen(true)} style={{ marginLeft: "auto", background: "#177245", color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontWeight: 800, fontSize: 12, cursor: "pointer" }}>View / Edit pin</button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setMapOpen(true)}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, border: "2px dashed " + BRAND.green, background: "#FDF7F1", color: BRAND.green, borderRadius: 10, padding: "12px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+              🗺️ Set your location on map
+            </button>
+          )}
+        </div>
       </div>
 
       <SectionLabel n="3" t="Payment" />
@@ -733,6 +867,8 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
       <button onClick={place} style={{ width: "100%", background: BRAND.green, color: "#fff", border: "none", borderRadius: 12, padding: 14, fontWeight: 800, fontSize: 15, cursor: "pointer" }}>
         Place order — {rup(total)}
       </button>
+      {mapOpen && <MapPicker initial={form.loc} close={() => setMapOpen(false)}
+        onSave={(ll) => { setForm((f) => ({ ...f, loc: ll })); setMapOpen(false); setErr(""); }} />}
     </Drawer>
   );
 }
@@ -752,7 +888,8 @@ function Success({ order, settings, close }) {
     `\nTotal: *${rup(order.total)}* (${order.pay === "cod" ? "COD" : "UPI on delivery"})` +
     `\nSlot: ${order.slotDate} · ${order.slotLabel}` +
     `\nName: ${order.name} · 📞 ${order.phone}` +
-    `\nAddress: ${order.address}, ${order.pincode}`
+    `\nAddress: ${order.address}, ${order.pincode}` +
+    (order.loc ? `\n📍 Map: https://www.google.com/maps?q=${order.loc.lat},${order.loc.lng}` : "")
   );
   return (
     <Modal close={close}>
