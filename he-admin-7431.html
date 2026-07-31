@@ -259,7 +259,7 @@ function AdminApp() {
   const revenue = active.filter((o) => o.status === "Delivered").reduce((s, o) => s + o.total, 0);
   const todayRevenue = todays.reduce((s, o) => s + o.total, 0);
 
-  const tabs = [["dash", "📊 Dashboard"], ["orders", `📦 Orders${newOrders ? ` (+${newOrders} new)` : ""}`], ["menu", "🍗 Menu"], ["slots", "🕐 Slots"], ["settings", "⚙️ Settings"]];
+  const tabs = [["dash", "📊 Dashboard"], ["orders", `📦 Orders${newOrders ? ` (+${newOrders} new)` : ""}`], ["menu", "🍗 Menu"], ["cash", "💰 Cash"], ["slots", "🕐 Slots"], ["settings", "⚙️ Settings"]];
 
   return (
     <Shell>
@@ -269,7 +269,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v2.3</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v2.4</span>
           <button onClick={() => { refresh(false); setNewOrders(0); }} style={{ background: BRAND.cream, color: BRAND.redDark, border: "none", borderRadius: 8, padding: "6px 12px", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>↻ Sync now</button>
         </div>
       </header>
@@ -288,6 +288,7 @@ function AdminApp() {
               <Stat l="Pending orders" v={pending.length} sub="need action" hot={pending.length > 0} />
               <Stat l="Delivered revenue" v={rup(revenue)} sub="all time" />
               <Stat l="Total orders" v={orders.length} sub={`${orders.length - active.length} cancelled`} />
+              <Stat l="Cash pending from riders" v={rup(active.filter((o) => o.status === "Delivered" && o.pay === "cod" && !o.cashSettled).reduce((s, o) => s + o.total, 0))} sub="tap 💰 Cash to settle" hot />
             </div>
             <h3 className="display" style={{ fontWeight: 800, fontSize: 17 }}>Today's slot load</h3>
             <div style={{ display: "grid", gap: 8 }}>
@@ -305,6 +306,7 @@ function AdminApp() {
         )}
         {tab === "orders" && <Orders orders={orders} saveOrders={saveOrders} />}
         {tab === "menu" && <Menu products={products} cats={categories} save={(p) => saveCore({ products: p })} saveCats={(c) => saveCore({ categories: c })} />}
+        {tab === "cash" && <Cash orders={orders} saveOrders={saveOrders} />}
         {tab === "slots" && <Slots slots={slots} save={(s) => saveCore({ slots: s })} />}
         {tab === "settings" && <Settings settings={settings} save={(s) => saveCore({ settings: s })} />}
       </main>
@@ -447,6 +449,110 @@ function Orders({ orders, saveOrders }) {
             <RiderAssign o={o} onSave={(rider) => saveOrders(orders.map((x) => (x.id === o.id ? { ...x, rider } : x)))} />
           </div>
         ))}
+      </div>
+    </>
+  );
+}
+
+function Cash({ orders, saveOrders }) {
+  const [date, setDate] = useState(dkey(new Date()));
+  const delivered = orders.filter((o) => o.status === "Delivered");
+  const codAll = delivered.filter((o) => o.pay === "cod");
+  const pendingAll = codAll.filter((o) => !o.cashSettled);
+  const dayOrders = delivered.filter((o) => o.slotDate === date);
+  const dayCod = dayOrders.filter((o) => o.pay === "cod");
+  const dayUpi = dayOrders.filter((o) => o.pay !== "cod");
+  const sum = (l) => l.reduce((s, o) => s + o.total, 0);
+
+  const riderKey = (o) => ((o.rider || "").trim() || "Unassigned");
+  const groups = {};
+  pendingAll.forEach((o) => { const k = riderKey(o); (groups[k] = groups[k] || []).push(o); });
+
+  const collect = (k, list) => {
+    const amt = sum(list);
+    if (!window.confirm(`Confirm you received ${rup(amt)} cash from ${k} for ${list.length} order(s)?`)) return;
+    const ids = {}; list.forEach((o) => { ids[o.id] = 1; });
+    const at = new Date().toISOString();
+    saveOrders(orders.map((o) => (ids[o.id] ? { ...o, cashSettled: true, settledAt: at } : o)));
+  };
+
+  // settlement history: group settled orders by settlement day + rider
+  const hist = {};
+  codAll.filter((o) => o.cashSettled).forEach((o) => {
+    const d = o.settledAt ? dkey(new Date(o.settledAt)) : o.slotDate;
+    const k = d + "||" + riderKey(o);
+    (hist[k] = hist[k] || []).push(o);
+  });
+  const histRows = Object.keys(hist).sort().reverse().slice(0, 25);
+
+  const undo = (list) => {
+    if (!window.confirm("Undo this collection? The amount goes back to pending.")) return;
+    const ids = {}; list.forEach((o) => { ids[o.id] = 1; });
+    saveOrders(orders.map((o) => (ids[o.id] ? { ...o, cashSettled: false, settledAt: null } : o)));
+  };
+
+  return (
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 12, marginBottom: 16 }}>
+        <Stat l="Cash pending from riders" v={rup(sum(pendingAll))} sub={`${pendingAll.length} order(s), all dates`} hot={pendingAll.length > 0} />
+        <Stat l="Cash orders on this date" v={rup(sum(dayCod))} sub={`${dayCod.length} COD delivered`} />
+        <Stat l="UPI on this date" v={rup(sum(dayUpi))} sub={`${dayUpi.length} paid online`} />
+        <Stat l="Total collected on date" v={rup(sum(dayOrders))} sub="cash + UPI" />
+      </div>
+
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 13, fontWeight: 700 }}>Date:</span>
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ ...inp, width: "auto", padding: "8px 12px", fontSize: 13 }} />
+        <button onClick={() => setDate(dkey(new Date()))} style={{ background: "#fff", border: "1.5px solid " + BRAND.red, color: BRAND.red, borderRadius: 8, padding: "8px 14px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>Today</button>
+      </div>
+
+      <h3 className="display" style={{ fontWeight: 800, fontSize: 17, margin: "0 0 8px" }}>Cash to collect from riders</h3>
+      {Object.keys(groups).length === 0 && (
+        <div style={{ background: "#EAF6EE", border: "1px solid #BEDFC8", color: "#177245", borderRadius: 10, padding: 14, fontSize: 13.5, fontWeight: 700 }}>
+          ✓ All cash settled — nothing pending from any rider.
+        </div>
+      )}
+      <div style={{ display: "grid", gap: 10 }}>
+        {Object.keys(groups).sort().map((k) => {
+          const list = groups[k].slice().sort((a, b) => (a.slotDate < b.slotDate ? -1 : 1));
+          const dates = Array.from(new Set(list.map((o) => o.slotDate))).sort();
+          return (
+            <div key={k} style={{ background: "#fff", borderRadius: 12, padding: 14, borderLeft: "4px solid #B98A2E" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 15 }}>🛵 {k}</div>
+                  <div style={{ fontSize: 12, color: "#8a857a" }}>{list.length} COD order(s) · {dates.join(", ")}</div>
+                </div>
+                <div className="display" style={{ fontSize: 22, fontWeight: 800, color: "#8E6A1F" }}>{rup(sum(list))}</div>
+              </div>
+              <div style={{ fontSize: 12, color: "#5c584e", margin: "8px 0" }}>
+                {list.map((o) => `${o.id} (${rup(o.total)})`).join(" · ")}
+              </div>
+              <button onClick={() => collect(k, list)}
+                style={{ width: "100%", background: BRAND.ok, color: "#fff", border: "none", borderRadius: 10, padding: 11, fontWeight: 800, fontSize: 14, cursor: "pointer" }}>
+                ✓ Collected {rup(sum(list))} from {k}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      <h3 className="display" style={{ fontWeight: 800, fontSize: 17, margin: "22px 0 8px" }}>Collection history</h3>
+      {histRows.length === 0 && <div style={{ color: "#8a857a", fontSize: 13 }}>No collections recorded yet.</div>}
+      <div style={{ display: "grid", gap: 8 }}>
+        {histRows.map((k) => {
+          const list = hist[k];
+          const [d, r] = k.split("||");
+          return (
+            <div key={k} style={{ background: "#fff", borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 13 }}>
+              <span style={{ fontWeight: 700 }}>✅ {d}</span>
+              <span>· {r}</span>
+              <span style={{ color: "#8a857a" }}>· {list.length} order(s)</span>
+              <b style={{ marginLeft: "auto", color: BRAND.ok }}>{rup(list.reduce((s, o) => s + o.total, 0))}</b>
+              <button onClick={() => undo(list)} style={{ background: "#f0ece1", border: "none", borderRadius: 7, padding: "5px 10px", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>Undo</button>
+            </div>
+          );
+        })}
       </div>
     </>
   );
