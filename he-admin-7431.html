@@ -4,6 +4,15 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Hunt & Eat — Admin Dashboard</title>
+<link rel="manifest" href="./manifest.webmanifest" />
+<meta name="theme-color" content="#A6212E" />
+<link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+<link rel="icon" type="image/png" href="./icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<script>
+if ("serviceWorker" in navigator) { navigator.serviceWorker.register("./sw.js").catch(function(){}); }
+</script>
 <!-- React + Babel (compiles the app right in the browser — no build tools needed) -->
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
@@ -124,7 +133,7 @@ const BRAND = {
   bg: "#F4F0E6", ink: "#241E1A", danger: "#8E1B25", ok: "#177245",
 };
 
-const CATEGORIES = [
+const DEFAULT_CATS = [
   { id: "chicken", name: "Country Chicken" }, { id: "cuts", name: "Cuts & Boneless" },
   { id: "eggs", name: "Country Eggs" }, { id: "quail", name: "Quail & Kadaknath" },
   { id: "rtc", name: "Ready to Cook" }, { id: "combo", name: "Combos" },
@@ -220,6 +229,7 @@ function AdminApp() {
   const settings = core?.settings || { adminPin: "1234" };
   const products = core?.products || [];
   const slots = core?.slots || [];
+  const categories = (core?.categories && core.categories.length) ? core.categories : DEFAULT_CATS;
 
   if (!authed) {
     return (
@@ -259,7 +269,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v2.2</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v2.3</span>
           <button onClick={() => { refresh(false); setNewOrders(0); }} style={{ background: BRAND.cream, color: BRAND.redDark, border: "none", borderRadius: 8, padding: "6px 12px", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>↻ Sync now</button>
         </div>
       </header>
@@ -294,7 +304,7 @@ function AdminApp() {
           </>
         )}
         {tab === "orders" && <Orders orders={orders} saveOrders={saveOrders} />}
-        {tab === "menu" && <Menu products={products} save={(p) => saveCore({ products: p })} />}
+        {tab === "menu" && <Menu products={products} cats={categories} save={(p) => saveCore({ products: p })} saveCats={(c) => saveCore({ categories: c })} />}
         {tab === "slots" && <Slots slots={slots} save={(s) => saveCore({ slots: s })} />}
         {tab === "settings" && <Settings settings={settings} save={(s) => saveCore({ settings: s })} />}
       </main>
@@ -442,9 +452,63 @@ function Orders({ orders, saveOrders }) {
   );
 }
 
+function CatManager({ cats, products, onSave, close }) {
+  const [list, setList] = useState(cats.map((c) => ({ ...c })));
+  const upd = (i, patch) => setList(list.map((c, j) => (j === i ? { ...c, ...patch } : c)));
+  const move = (i, dir) => {
+    const j = i + dir; if (j < 0 || j >= list.length) return;
+    const n = [...list]; const tmp = n[i]; n[i] = n[j]; n[j] = tmp; setList(n);
+  };
+  const del = (i) => {
+    const c = list[i];
+    const used = products.filter((p) => p.cat === c.id).length;
+    if (used) return alert(`${used} menu item(s) still use "${c.name}". Move them to another category first, then delete this one.`);
+    if (window.confirm(`Delete category "${c.name}"?`)) setList(list.filter((_, j) => j !== i));
+  };
+  const saveAll = () => {
+    const clean = list.filter((c) => (c.name || "").trim()).map((c) => ({ id: c.id, name: c.name.trim(), ta: (c.ta || "").trim(), icon: (c.icon || "🍽️").trim() }));
+    if (!clean.length) return alert("Keep at least one category.");
+    onSave(clean);
+  };
+  const btn = { background: "#f0ece1", border: "none", borderRadius: 7, width: 28, height: 28, cursor: "pointer", fontWeight: 800, fontSize: 13 };
+  return (
+    <Modal close={close}>
+      <h3 className="display" style={{ fontWeight: 800, margin: "0 0 4px" }}>Manage categories</h3>
+      <p style={{ fontSize: 12.5, color: "#6b675e", margin: "0 0 12px" }}>Rename freely — items stay linked. Use ▲▼ to set the order customers see on the store.</p>
+      <div style={{ display: "grid", gap: 8 }}>
+        {list.map((c, i) => (
+          <div key={c.id} style={{ display: "flex", gap: 6, alignItems: "center", background: "#FBF7EF", borderRadius: 10, padding: 8 }}>
+            <input value={c.icon} onChange={(e) => upd(i, { icon: e.target.value })} title="Emoji"
+              style={{ ...inp, width: 46, textAlign: "center", padding: "8px 4px", fontSize: 17 }} />
+            <div style={{ flex: 1, display: "grid", gap: 4 }}>
+              <input value={c.name} onChange={(e) => upd(i, { name: e.target.value })} placeholder="Category name"
+                style={{ ...inp, padding: "7px 10px", fontSize: 13, fontWeight: 700 }} />
+              <input value={c.ta || ""} onChange={(e) => upd(i, { ta: e.target.value })} placeholder="Tamil name (optional)"
+                style={{ ...inp, padding: "7px 10px", fontSize: 12.5 }} />
+            </div>
+            <div style={{ display: "grid", gap: 3 }}>
+              <button onClick={() => move(i, -1)} style={btn}>▲</button>
+              <button onClick={() => move(i, 1)} style={btn}>▼</button>
+            </div>
+            <button onClick={() => del(i)} style={{ ...btn, background: "#fbe9e7", color: BRAND.danger, width: 34 }}>✕</button>
+          </div>
+        ))}
+      </div>
+      <button onClick={() => setList([...list, { id: "c" + Date.now(), name: "", ta: "", icon: "🍽️" }])}
+        style={{ width: "100%", marginTop: 10, background: "#fff", border: "1.5px dashed " + BRAND.red, color: BRAND.red, borderRadius: 10, padding: 11, fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+        + Add category
+      </button>
+      <button onClick={saveAll} style={{ width: "100%", marginTop: 8, background: BRAND.red, color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 800, cursor: "pointer" }}>
+        Save & publish categories
+      </button>
+    </Modal>
+  );
+}
+
 /* ---------------- Menu (with photo upload) ---------------- */
-function Menu({ products, save }) {
-  const empty = { id: "", cat: "chicken", name: "", pcs: "", gross: "—", net: "—", mrp: "", price: "", stock: true, emoji: "🍗", desc: "", img: "" };
+function Menu({ products, save, cats, saveCats }) {
+  const [catOpen, setCatOpen] = useState(false);
+  const empty = { id: "", cat: (cats[0] && cats[0].id) || "chicken", name: "", pcs: "", gross: "—", net: "—", mrp: "", price: "", stock: true, emoji: "🍗", desc: "", img: "" };
   const [edit, setEdit] = useState(null);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef(null);
@@ -471,7 +535,10 @@ function Menu({ products, save }) {
     <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
         <p style={{ fontSize: 13, color: "#6b675e", margin: 0 }}>Changes here go live on the customer store on their next visit or refresh.</p>
-        <button onClick={() => setEdit(empty)} style={{ background: BRAND.red, color: "#fff", border: "none", borderRadius: 10, padding: "10px 18px", fontWeight: 700, cursor: "pointer" }}>+ Add item</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setCatOpen(true)} style={{ background: "#fff", color: BRAND.red, border: "1.5px solid " + BRAND.red, borderRadius: 10, padding: "10px 16px", fontWeight: 700, cursor: "pointer" }}>🗂️ Categories</button>
+          <button onClick={() => setEdit(empty)} style={{ background: BRAND.red, color: "#fff", border: "none", borderRadius: 10, padding: "10px 18px", fontWeight: 700, cursor: "pointer" }}>+ Add item</button>
+        </div>
       </div>
       <div style={{ display: "grid", gap: 8 }}>
         {products.map((p) => (
@@ -481,7 +548,7 @@ function Menu({ products, save }) {
             </div>
             <div style={{ flex: 1, minWidth: 160 }}>
               <div style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</div>
-              <div style={{ fontSize: 12, color: "#8a857a" }}>{p.cat} · {rup(p.price)} <s style={{ opacity: .6 }}>{rup(p.mrp)}</s> {p.img ? "· 📷 photo set" : "· no photo"}</div>
+              <div style={{ fontSize: 12, color: "#8a857a" }}>{(cats.find((c) => c.id === p.cat) || {}).name || p.cat} · {rup(p.price)} <s style={{ opacity: .6 }}>{rup(p.mrp)}</s> {p.img ? "· 📷 photo set" : "· no photo"}</div>
             </div>
             <label style={{ fontSize: 12, fontWeight: 600, display: "flex", gap: 5, alignItems: "center", cursor: "pointer" }}>
               <input type="checkbox" checked={p.stock} onChange={() => save(products.map((x) => x.id === p.id ? { ...x, stock: !x.stock } : x))} /> In stock
@@ -522,7 +589,7 @@ function Menu({ products, save }) {
           <div style={{ display: "grid", gap: 8 }}>
             <input style={inp} placeholder="Item name" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />
             <select style={inp} value={edit.cat} onChange={(e) => setEdit({ ...edit, cat: e.target.value })}>
-              {CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              {cats.map((c) => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
             </select>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
               <input style={inp} placeholder="Selling price ₹" type="number" value={edit.price} onChange={(e) => setEdit({ ...edit, price: e.target.value })} />
@@ -538,6 +605,8 @@ function Menu({ products, save }) {
           </div>
         </Modal>
       )}
+      {catOpen && <CatManager cats={cats} products={products} close={() => setCatOpen(false)}
+        onSave={(c) => { saveCats(c); setCatOpen(false); }} />}
     </>
   );
 }
