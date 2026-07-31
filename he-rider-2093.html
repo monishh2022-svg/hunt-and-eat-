@@ -4,6 +4,15 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Hunt & Eat — Rider App</title>
+<link rel="manifest" href="./manifest.webmanifest" />
+<meta name="theme-color" content="#A6212E" />
+<link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+<link rel="icon" type="image/png" href="./icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<script>
+if ("serviceWorker" in navigator) { navigator.serviceWorker.register("./sw.js").catch(function(){}); }
+</script>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
@@ -60,6 +69,7 @@ function App() {
   const active = mine.filter((o) => o.status !== "Delivered" && o.status !== "Cancelled");
   const doneToday = mine.filter((o) => o.status === "Delivered" && o.slotDate === dkey(new Date()));
   const cashToday = doneToday.filter((o) => o.pay === "cod").reduce((s, o) => s + o.total, 0);
+  const cashInHand = mine.filter((o) => o.status === "Delivered" && o.pay === "cod" && !o.cashSettled).reduce((s, o) => s + o.total, 0);
 
   const setStatus = async (id, status) => {
     try {
@@ -113,8 +123,9 @@ function App() {
             <div className="display" style={{ fontSize: 22, fontWeight: 800 }}>{doneToday.length}</div>
           </div>
           <div style={{ flex: 1.4, background: "#fff", borderRadius: 12, padding: "10px 14px", borderLeft: "4px solid #B98A2E" }}>
-            <div style={{ fontSize: 11, color: "#8a857a", fontWeight: 700 }}>CASH COLLECTED</div>
-            <div className="display" style={{ fontSize: 22, fontWeight: 800 }}>{rup(cashToday)}</div>
+            <div style={{ fontSize: 11, color: "#8a857a", fontWeight: 700 }}>CASH IN HAND</div>
+            <div className="display" style={{ fontSize: 22, fontWeight: 800 }}>{rup(cashInHand)}</div>
+            <div style={{ fontSize: 10, color: "#8a857a" }}>to hand over · today {rup(cashToday)}</div>
           </div>
         </div>
 
