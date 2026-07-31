@@ -266,6 +266,7 @@ async function saveKey(key, val) {
 /* ================================ APP ================================ */
 function App() {
   const [products, setProducts] = useState(DEFAULT_PRODUCTS);
+  const [categories, setCategories] = useState(CATEGORIES.slice(1));
   const [slots, setSlots] = useState(DEFAULT_SLOTS);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [orders, setOrders] = useState([]);
@@ -280,11 +281,12 @@ function App() {
       } catch { coreOk = false; } // read failed — use defaults locally, never overwrite the database
       if (data) {
         setProducts(data.products || DEFAULT_PRODUCTS);
+        setCategories(data.categories && data.categories.length ? data.categories : CATEGORIES.slice(1));
         setSlots(data.slots || DEFAULT_SLOTS);
         setSettings({ ...DEFAULT_SETTINGS, ...(data.settings || {}) });
       } else if (coreOk) {
         // database confirmed empty — true first run: publish defaults once
-        saveKey("huntandeat-core-v2", { products: DEFAULT_PRODUCTS, slots: DEFAULT_SLOTS, settings: DEFAULT_SETTINGS });
+        saveKey("huntandeat-core-v2", { products: DEFAULT_PRODUCTS, slots: DEFAULT_SLOTS, settings: DEFAULT_SETTINGS, categories: CATEGORIES.slice(1) });
       }
       const ord = await loadKey("huntandeat-orders", []);
       setOrders(ord);
@@ -349,13 +351,14 @@ function App() {
         @keyframes fadeup { from { opacity: 0; transform: translateY(8px);} to { opacity: 1; transform: none; } }
         @media (prefers-reduced-motion: reduce) { .fadeup { animation: none; } }
       `}</style>
-      <Shop products={products} slots={slots} settings={settings} orders={orders} onPlaceOrder={placeOrder} />
+      <Shop products={products} categories={categories} slots={slots} settings={settings} orders={orders} onPlaceOrder={placeOrder} />
     </div>
   );
 }
 
 /* ================================ SHOP ================================ */
-function Shop({ products, slots, settings, orders, onPlaceOrder }) {
+function Shop({ products, categories, slots, settings, orders, onPlaceOrder }) {
+  const cats = [CATEGORIES[0], ...(categories && categories.length ? categories : CATEGORIES.slice(1))];
   const [cat, setCat] = useState("all");
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState({}); // id -> qty
@@ -460,7 +463,7 @@ function Shop({ products, slots, settings, orders, onPlaceOrder }) {
       {/* categories */}
       <div style={{ maxWidth: 1100, margin: "-24px auto 0", padding: "0 16px" }}>
         <div style={{ background: "#fff", borderRadius: 14, boxShadow: "0 4px 20px rgba(23,63,44,.10)", padding: 10, display: "flex", gap: 6, overflowX: "auto" }}>
-          {CATEGORIES.map((c) => (
+          {cats.map((c) => (
             <button className="catbtn" key={c.id} onClick={() => setCat(c.id)}
               style={{
                 flex: "0 0 auto", border: "none", cursor: "pointer", borderRadius: 10, padding: "10px 14px",
@@ -479,7 +482,7 @@ function Shop({ products, slots, settings, orders, onPlaceOrder }) {
       <main id="menu" className="menu-main" style={{ maxWidth: 1100, margin: "0 auto", padding: "34px 16px 80px" }}>
         <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 3, color: "#B98A2E", marginBottom: 4 }}>OUR MENU · நாட்டுக்கோழி</div>
         <h2 className="display" style={{ fontSize: 27, fontWeight: 800, margin: "0 0 4px" }}>
-          {CATEGORIES.find((c) => c.id === cat)?.name}
+          {cats.find((c) => c.id === cat)?.name}
         </h2>
         <p style={{ margin: "0 0 18px", fontSize: 13, color: "#6b675e" }}>Weights shown are gross before cleaning · net after cleaning, like-for-like with your local shop.</p>
         <div className="pgrid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(230px,1fr))", gap: 16 }}>
