@@ -269,7 +269,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v2.4</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v2.5</span>
           <button onClick={() => { refresh(false); setNewOrders(0); }} style={{ background: BRAND.cream, color: BRAND.redDark, border: "none", borderRadius: 8, padding: "6px 12px", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>↻ Sync now</button>
         </div>
       </header>
@@ -308,7 +308,7 @@ function AdminApp() {
         {tab === "menu" && <Menu products={products} cats={categories} save={(p) => saveCore({ products: p })} saveCats={(c) => saveCore({ categories: c })} />}
         {tab === "cash" && <Cash orders={orders} saveOrders={saveOrders} />}
         {tab === "slots" && <Slots slots={slots} save={(s) => saveCore({ slots: s })} />}
-        {tab === "settings" && <Settings settings={settings} save={(s) => saveCore({ settings: s })} />}
+        {tab === "settings" && <Settings settings={settings} save={(s) => saveCore({ settings: s })} zones={core?.zones || []} saveZones={(z) => saveCore({ zones: z })} />}
       </main>
     </Shell>
   );
@@ -319,6 +319,7 @@ function Shell({ children }) {
     <div style={{ minHeight: "100vh", background: BRAND.bg, fontFamily: "'Nunito','Segoe UI',system-ui,sans-serif", color: BRAND.ink }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Nunito:wght@400;600;700;800&display=swap');
+        .he-pin { font-size: 22px; line-height: 1; text-align: center; }
         .display { font-family: 'Baloo 2', 'Trebuchet MS', sans-serif; }
         ::-webkit-scrollbar { height: 6px; width: 8px; }
         ::-webkit-scrollbar-thumb { background: #d8d2c4; border-radius: 4px; }
@@ -451,6 +452,122 @@ function Orders({ orders, saveOrders }) {
         ))}
       </div>
     </>
+  );
+}
+
+function ensureLeaflet() {
+  return new Promise((resolve, reject) => {
+    if (window.L) return resolve(window.L);
+    const css = document.createElement("link");
+    css.rel = "stylesheet";
+    css.href = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
+    document.head.appendChild(css);
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
+    s.onload = () => resolve(window.L);
+    s.onerror = () => reject(new Error("map load failed"));
+    document.head.appendChild(s);
+  });
+}
+
+function ZoneEditor({ zones, onSave, close }) {
+  const [list, setList] = useState((zones || []).map((z) => ({ ...z })));
+  const [sel, setSel] = useState(0);
+  const boxRef = useRef(null), mapRef = useRef(null), layersRef = useRef([]);
+  const listRef = useRef(list), selRef = useRef(sel);
+  const [ready, setReady] = useState(false), [failed, setFailed] = useState(false);
+  useEffect(() => { listRef.current = list; selRef.current = sel; });
+
+  useEffect(() => {
+    let alive = true;
+    ensureLeaflet().then((L) => {
+      if (!alive || !boxRef.current || mapRef.current) return;
+      const first = list[0];
+      const map = L.map(boxRef.current).setView(first && first.lat ? [first.lat, first.lng] : [12.8438, 80.0576], 12);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+      map.on("click", (e) => {
+        const i = selRef.current, cur = listRef.current;
+        if (!cur[i]) return;
+        setList(cur.map((z, j) => (j === i ? { ...z, lat: +e.latlng.lat.toFixed(6), lng: +e.latlng.lng.toFixed(6) } : z)));
+      });
+      mapRef.current = map;
+      setReady(true);
+      setTimeout(() => map.invalidateSize(), 250);
+    }).catch(() => setFailed(true));
+    return () => { alive = false; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; } };
+  }, []);
+
+  useEffect(() => {
+    if (!ready || !mapRef.current || !window.L) return;
+    const L = window.L, map = mapRef.current;
+    layersRef.current.forEach((l) => map.removeLayer(l));
+    layersRef.current = [];
+    list.forEach((z, i) => {
+      if (!z.lat || !z.lng || !z.radiusKm) return;
+      const on = z.active !== false, cur = i === sel;
+      const c = L.circle([z.lat, z.lng], {
+        radius: z.radiusKm * 1000, color: cur ? "#A6212E" : on ? "#177245" : "#999",
+        weight: cur ? 3 : 2, fillColor: cur ? "#A6212E" : "#2E8B57", fillOpacity: on ? (cur ? 0.16 : 0.08) : 0.04,
+      }).addTo(map).bindTooltip((z.name || "Zone") + " · " + z.radiusKm + " km");
+      const m = L.marker([z.lat, z.lng], { icon: L.divIcon({ html: cur ? "🎯" : "📍", className: "he-pin", iconSize: [26, 26], iconAnchor: [13, 26] }) }).addTo(map);
+      layersRef.current.push(c, m);
+    });
+  }, [list, sel, ready]);
+
+  const upd = (i, patch) => setList(list.map((z, j) => (j === i ? { ...z, ...patch } : z)));
+  const addZone = () => {
+    const c = mapRef.current ? mapRef.current.getCenter() : { lat: 12.8438, lng: 80.0576 };
+    setList([...list, { id: "z" + Date.now(), name: "New zone", lat: +c.lat.toFixed(6), lng: +c.lng.toFixed(6), radiusKm: 5, active: true }]);
+    setSel(list.length);
+  };
+
+  return (
+    <Modal close={close}>
+      <h3 className="display" style={{ fontWeight: 800, margin: "0 0 4px" }}>Delivery zones (geofence)</h3>
+      <p style={{ fontSize: 12.5, color: "#6b675e", margin: "0 0 10px" }}>
+        Customers can order only if their map pin falls inside a green circle. Select a zone below, then <b>tap the map</b> to move its centre.
+      </p>
+      {!failed && <div ref={boxRef} style={{ height: 280, borderRadius: 12, overflow: "hidden", border: "1px solid #E5DFD0", background: "#EFEAE0" }} />}
+      {failed && <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 10, padding: 12, fontSize: 13 }}>Map couldn't load — you can still type coordinates manually below.</div>}
+
+      <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+        {list.map((z, i) => (
+          <div key={z.id || i} onClick={() => setSel(i)}
+            style={{ background: i === sel ? "#FDF0EE" : "#FBF7EF", border: "2px solid " + (i === sel ? BRAND.red : "transparent"), borderRadius: 10, padding: 10, cursor: "pointer" }}>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+              <span style={{ fontSize: 15 }}>{i === sel ? "🎯" : "📍"}</span>
+              <input value={z.name || ""} onChange={(e) => upd(i, { name: e.target.value })} placeholder="Zone name (e.g. Guduvanchery core)"
+                style={{ ...inp, padding: "7px 10px", fontSize: 13, fontWeight: 700 }} />
+              <button onClick={(e) => { e.stopPropagation(); if (window.confirm("Delete this zone?")) { setList(list.filter((_, j) => j !== i)); setSel(0); } }}
+                style={{ background: "#fbe9e7", color: BRAND.danger, border: "none", borderRadius: 7, padding: "6px 10px", fontWeight: 800, cursor: "pointer" }}>✕</button>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <label style={{ fontSize: 12, fontWeight: 700, display: "flex", gap: 5, alignItems: "center" }}>
+                Radius
+                <input type="number" min={0.5} step={0.5} value={z.radiusKm || 5} onChange={(e) => upd(i, { radiusKm: Number(e.target.value) || 1 })}
+                  style={{ ...inp, width: 72, padding: "6px 8px", fontSize: 13 }} /> km
+              </label>
+              <label style={{ fontSize: 12, fontWeight: 700, display: "flex", gap: 5, alignItems: "center", color: z.active !== false ? BRAND.ok : BRAND.danger }}>
+                <input type="checkbox" checked={z.active !== false} onChange={() => upd(i, { active: z.active === false })} />
+                {z.active !== false ? "Active" : "Paused"}
+              </label>
+              <span style={{ fontSize: 11, color: "#8a857a", marginLeft: "auto" }}>{z.lat ? z.lat + ", " + z.lng : "tap map to set centre"}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <button onClick={addZone} style={{ width: "100%", marginTop: 10, background: "#fff", border: "1.5px dashed " + BRAND.red, color: BRAND.red, borderRadius: 10, padding: 11, fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+        + Add zone at map centre
+      </button>
+      <button onClick={() => onSave(list.filter((z) => z.lat && z.lng && z.radiusKm > 0))}
+        style={{ width: "100%", marginTop: 8, background: BRAND.red, color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 800, cursor: "pointer" }}>
+        Save & publish zones
+      </button>
+      <p style={{ fontSize: 11.5, color: "#8a857a", marginTop: 8, marginBottom: 0 }}>
+        No active zones = geofencing off, and the pincode list is used instead.
+      </p>
+    </Modal>
   );
 }
 
@@ -753,12 +870,25 @@ const Field = ({ l, children }) => (
   <label style={{ display: "grid", gap: 4, fontSize: 13, fontWeight: 600 }}>{l}{children}</label>
 );
 
-function Settings({ settings, save }) {
+function Settings({ settings, save, zones, saveZones }) {
+  const [zoneOpen, setZoneOpen] = useState(false);
+  const activeZones = (zones || []).filter((z) => z.active !== false);
   const [f, setF] = useState(settings);
   const [saved, setSaved] = useState(false);
   useEffect(() => setF(settings), [settings]);
   return (
     <div style={{ maxWidth: 480, display: "grid", gap: 10 }}>
+      <div style={{ background: "#fff", borderRadius: 12, padding: 14, borderLeft: "4px solid " + BRAND.red }}>
+        <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 2 }}>🗺️ Delivery zones (geofence)</div>
+        <div style={{ fontSize: 12.5, color: "#6b675e", marginBottom: 8 }}>
+          {activeZones.length
+            ? `${activeZones.length} active zone(s): ${activeZones.map((z) => (z.name || "zone") + " " + z.radiusKm + "km").join(", ")}. Orders are accepted only inside these areas.`
+            : "No zones set — customers are checked by pincode only, which can include areas you don't actually serve."}
+        </div>
+        <button onClick={() => setZoneOpen(true)} style={{ background: BRAND.red, color: "#fff", border: "none", borderRadius: 10, padding: "10px 16px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+          {activeZones.length ? "Edit zones on map" : "Set up delivery zones"}
+        </button>
+      </div>
       <Field l="Delivery fee (₹)"><input style={inp} type="number" value={f.deliveryFee} onChange={(e) => setF({ ...f, deliveryFee: Number(e.target.value) })} /></Field>
       <Field l="Free delivery above (₹)"><input style={inp} type="number" value={f.freeAbove} onChange={(e) => setF({ ...f, freeAbove: Number(e.target.value) })} /></Field>
       <Field l="Serviceable pincodes (comma separated)"><input style={inp} value={f.pincodes} onChange={(e) => setF({ ...f, pincodes: e.target.value })} /></Field>
@@ -783,6 +913,7 @@ function Settings({ settings, save }) {
       <button onClick={() => { save(f); setSaved(true); setTimeout(() => setSaved(false), 1500); }} style={{ background: BRAND.red, color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 700, cursor: "pointer" }}>
         {saved ? "✓ Saved & published" : "Save settings"}
       </button>
+      {zoneOpen && <ZoneEditor zones={zones} close={() => setZoneOpen(false)} onSave={(z) => { saveZones(z); setZoneOpen(false); }} />}
     </div>
   );
 }
