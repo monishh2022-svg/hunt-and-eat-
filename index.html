@@ -664,15 +664,38 @@ function distKm(a, b) {
   const s = Math.pow(Math.sin(dLat / 2), 2) + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.pow(Math.sin(dLng / 2), 2);
   return 2 * R * Math.asin(Math.sqrt(s));
 }
+function isPoly(z) { return z.shape === "poly" && Array.isArray(z.points) && z.points.length >= 3; }
+function zoneValid(z) { return z.active !== false && (isPoly(z) || (z.lat && z.lng && z.radiusKm > 0)); }
+// ray casting: is the point inside the drawn boundary?
+function inPolygon(loc, pts) {
+  let hit = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i].lng, yi = pts[i].lat, xj = pts[j].lng, yj = pts[j].lat;
+    if ((yi > loc.lat) !== (yj > loc.lat) && loc.lng < ((xj - xi) * (loc.lat - yi)) / (yj - yi) + xi) hit = !hit;
+  }
+  return hit;
+}
+function polyDist(loc, pts) { // rough distance to nearest boundary point (km)
+  return Math.min.apply(null, pts.map((p) => distKm(loc, p)));
+}
 function checkZones(loc, zones) {
-  const act = (zones || []).filter((z) => z.active !== false && z.lat && z.lng && z.radiusKm > 0);
+  const act = (zones || []).filter(zoneValid);
   if (!act.length || !loc) return null;
   let best = null;
   act.forEach((z) => {
-    const d = distKm(loc, z), gap = d - z.radiusKm;
-    if (!best || gap < best.gap) best = { zone: z, dist: d, gap };
+    let inside, gap, dist;
+    if (isPoly(z)) {
+      inside = inPolygon(loc, z.points);
+      dist = polyDist(loc, z.points);
+      gap = inside ? -0.01 : dist;
+    } else {
+      dist = distKm(loc, z);
+      gap = dist - z.radiusKm;
+      inside = gap <= 0;
+    }
+    if (!best || gap < best.gap) best = { zone: z, dist, gap, inside };
   });
-  return { inside: best.gap <= 0, zone: best.zone, dist: best.dist, gap: best.gap };
+  return { inside: best.inside, zone: best.zone, dist: best.dist, gap: best.gap };
 }
 
 function MapPicker({ initial, zones, onSave, close }) {
@@ -687,13 +710,17 @@ function MapPicker({ initial, zones, onSave, close }) {
     let alive = true;
     ensureLeaflet().then((L) => {
       if (!alive || !boxRef.current || mapRef.current) return;
-      const act = (zones || []).filter((z) => z.active !== false && z.lat && z.lng && z.radiusKm > 0);
-      const start = initial || (act[0] ? { lat: act[0].lat, lng: act[0].lng } : DEFAULT_PIN);
+      const act = (zones || []).filter(zoneValid);
+      const firstC = act.length ? (isPoly(act[0]) ? act[0].points[0] : { lat: act[0].lat, lng: act[0].lng }) : null;
+      const start = initial || firstC || DEFAULT_PIN;
       const map = L.map(boxRef.current).setView([start.lat, start.lng], initial ? 17 : 13);
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
       act.forEach((z) => {
-        L.circle([z.lat, z.lng], { radius: z.radiusKm * 1000, color: "#177245", weight: 2, fillColor: "#2E8B57", fillOpacity: 0.10 })
-          .addTo(map).bindTooltip(z.name || "Delivery area");
+        const style = { color: "#177245", weight: 2, fillColor: "#2E8B57", fillOpacity: 0.10 };
+        const layer = isPoly(z)
+          ? L.polygon(z.points.map((p) => [p.lat, p.lng]), style)
+          : L.circle([z.lat, z.lng], { ...style, radius: z.radiusKm * 1000 });
+        layer.addTo(map).bindTooltip(z.name || "Delivery area");
       });
       const icon = L.divIcon({ html: "📍", className: "he-pin", iconSize: [32, 32], iconAnchor: [16, 30] });
       const marker = L.marker([start.lat, start.lng], { draggable: true, icon }).addTo(map);
@@ -746,7 +773,7 @@ function MapPicker({ initial, zones, onSave, close }) {
             </div>
           ) : (
             <div style={{ background: "#FBE9E7", color: "#8E1B25", borderRadius: 8, padding: "8px 10px", fontSize: 12.5, fontWeight: 700, marginTop: 8, textAlign: "center" }}>
-              ✕ Outside our delivery area — about {zc.gap.toFixed(1)} km beyond {zc.zone.name || "our zone"}. Move the pin inside the green circle.
+              ✕ Outside our delivery area — the nearest point of {zc.zone.name || "our delivery area"} is about {zc.dist.toFixed(1)} km away. Move the pin inside the green area.
             </div>
           );
         })()}
@@ -801,7 +828,7 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
     if (activeZones.length) {
       if (!form.loc) return setErr("Please set your delivery location on the map — we serve only inside our delivery area.");
       const zc = checkZones(form.loc, zones);
-      if (!zc.inside) return setErr(`Sorry, your location is about ${zc.gap.toFixed(1)} km outside our delivery area. Please WhatsApp us — we may still be able to help.`);
+      if (!zc.inside) return setErr(`Sorry, your location is outside our delivery area (nearest point about ${zc.dist.toFixed(1)} km away). Please WhatsApp us — we may still be able to help.`);
     } else {
       const serviceable = settings.pincodes.split(",").map((x) => x.trim());
       if (!serviceable.includes(form.pincode.trim()))
@@ -906,7 +933,7 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
               </div>
             ) : (
               <div style={{ background: "#FBE9E7", border: "1px solid #F0C0BA", borderRadius: 8, padding: "9px 12px", fontSize: 12.5, fontWeight: 700, color: "#8E1B25" }}>
-                ✕ Sorry, this location is outside our delivery area — about {zc.gap.toFixed(1)} km too far.{" "}
+                ✕ Sorry, this location is outside our delivery area (nearest point about {zc.dist.toFixed(1)} km away).{" "}
                 <a href={`https://wa.me/91${(settings.phone || "").replace(/\D/g, "").slice(-10)}?text=${encodeURIComponent("Hi Hunt & Eat, do you deliver to my area? My location: https://www.google.com/maps?q=" + form.loc.lat + "," + form.loc.lng)}`}
                   target="_blank" rel="noreferrer" style={{ color: "#1FA855", fontWeight: 800 }}>Ask us on WhatsApp →</a>
               </div>
