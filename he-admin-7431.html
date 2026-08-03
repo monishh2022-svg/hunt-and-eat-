@@ -269,7 +269,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v2.5</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v2.6</span>
           <button onClick={() => { refresh(false); setNewOrders(0); }} style={{ background: BRAND.cream, color: BRAND.redDark, border: "none", borderRadius: 8, padding: "6px 12px", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>↻ Sync now</button>
         </div>
       </header>
@@ -470,102 +470,159 @@ function ensureLeaflet() {
   });
 }
 
+function isPoly(z) { return z.shape === "poly" && Array.isArray(z.points) && z.points.length >= 3; }
+
 function ZoneEditor({ zones, onSave, close }) {
   const [list, setList] = useState((zones || []).map((z) => ({ ...z })));
   const [sel, setSel] = useState(0);
+  const [drawing, setDrawing] = useState(false);
   const boxRef = useRef(null), mapRef = useRef(null), layersRef = useRef([]);
-  const listRef = useRef(list), selRef = useRef(sel);
+  const listRef = useRef(list), selRef = useRef(sel), drawRef = useRef(drawing);
   const [ready, setReady] = useState(false), [failed, setFailed] = useState(false);
-  useEffect(() => { listRef.current = list; selRef.current = sel; });
+  useEffect(() => { listRef.current = list; selRef.current = sel; drawRef.current = drawing; });
 
   useEffect(() => {
     let alive = true;
     ensureLeaflet().then((L) => {
       if (!alive || !boxRef.current || mapRef.current) return;
-      const first = list[0];
-      const map = L.map(boxRef.current).setView(first && first.lat ? [first.lat, first.lng] : [12.8438, 80.0576], 12);
+      const f0 = list[0];
+      const c0 = f0 ? (isPoly(f0) ? f0.points[0] : (f0.lat ? { lat: f0.lat, lng: f0.lng } : null)) : null;
+      const map = L.map(boxRef.current).setView(c0 ? [c0.lat, c0.lng] : [12.8438, 80.0576], c0 ? 14 : 12);
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
       map.on("click", (e) => {
-        const i = selRef.current, cur = listRef.current;
-        if (!cur[i]) return;
-        setList(cur.map((z, j) => (j === i ? { ...z, lat: +e.latlng.lat.toFixed(6), lng: +e.latlng.lng.toFixed(6) } : z)));
+        const i = selRef.current, cur = listRef.current, z = cur[i];
+        if (!z) return;
+        const pt = { lat: +e.latlng.lat.toFixed(6), lng: +e.latlng.lng.toFixed(6) };
+        if (z.shape === "poly") {
+          if (!drawRef.current) return; // only add points while drawing is on
+          setList(cur.map((x, j) => (j === i ? { ...x, points: [...(x.points || []), pt] } : x)));
+        } else {
+          setList(cur.map((x, j) => (j === i ? { ...x, ...pt } : x)));
+        }
       });
-      mapRef.current = map;
-      setReady(true);
+      mapRef.current = map; setReady(true);
       setTimeout(() => map.invalidateSize(), 250);
     }).catch(() => setFailed(true));
     return () => { alive = false; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; } };
   }, []);
 
+  // redraw all zones
   useEffect(() => {
     if (!ready || !mapRef.current || !window.L) return;
     const L = window.L, map = mapRef.current;
     layersRef.current.forEach((l) => map.removeLayer(l));
     layersRef.current = [];
     list.forEach((z, i) => {
-      if (!z.lat || !z.lng || !z.radiusKm) return;
       const on = z.active !== false, cur = i === sel;
-      const c = L.circle([z.lat, z.lng], {
-        radius: z.radiusKm * 1000, color: cur ? "#A6212E" : on ? "#177245" : "#999",
-        weight: cur ? 3 : 2, fillColor: cur ? "#A6212E" : "#2E8B57", fillOpacity: on ? (cur ? 0.16 : 0.08) : 0.04,
-      }).addTo(map).bindTooltip((z.name || "Zone") + " · " + z.radiusKm + " km");
-      const m = L.marker([z.lat, z.lng], { icon: L.divIcon({ html: cur ? "🎯" : "📍", className: "he-pin", iconSize: [26, 26], iconAnchor: [13, 26] }) }).addTo(map);
-      layersRef.current.push(c, m);
+      const style = { color: cur ? "#A6212E" : on ? "#177245" : "#999", weight: cur ? 3 : 2,
+        fillColor: cur ? "#A6212E" : "#2E8B57", fillOpacity: on ? (cur ? 0.15 : 0.07) : 0.03 };
+      if (z.shape === "poly") {
+        const pts = z.points || [];
+        if (pts.length >= 2) {
+          const layer = pts.length >= 3
+            ? L.polygon(pts.map((p) => [p.lat, p.lng]), style)
+            : L.polyline(pts.map((p) => [p.lat, p.lng]), style);
+          layer.addTo(map).bindTooltip(z.name || "Zone");
+          layersRef.current.push(layer);
+        }
+        if (cur) pts.forEach((p, pi) => {
+          const mk = L.marker([p.lat, p.lng], { draggable: true,
+            icon: L.divIcon({ html: '<div style="background:#A6212E;color:#fff;width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:10px;font-weight:800;border:2px solid #fff">' + (pi + 1) + "</div>", className: "he-vertex", iconSize: [20, 20], iconAnchor: [10, 10] }) }).addTo(map);
+          mk.on("dragend", () => {
+            const ll = mk.getLatLng(), cl = listRef.current, ci = selRef.current;
+            setList(cl.map((x, j) => (j === ci ? { ...x, points: x.points.map((q, qi) => (qi === pi ? { lat: +ll.lat.toFixed(6), lng: +ll.lng.toFixed(6) } : q)) } : x)));
+          });
+          layersRef.current.push(mk);
+        });
+      } else if (z.lat && z.lng && z.radiusKm) {
+        const c = L.circle([z.lat, z.lng], { ...style, radius: z.radiusKm * 1000 }).addTo(map).bindTooltip((z.name || "Zone") + " · " + z.radiusKm + " km");
+        const m = L.marker([z.lat, z.lng], { icon: L.divIcon({ html: cur ? "🎯" : "📍", className: "he-pin", iconSize: [26, 26], iconAnchor: [13, 26] }) }).addTo(map);
+        layersRef.current.push(c, m);
+      }
     });
   }, [list, sel, ready]);
 
   const upd = (i, patch) => setList(list.map((z, j) => (j === i ? { ...z, ...patch } : z)));
-  const addZone = () => {
+  const addCircle = () => {
     const c = mapRef.current ? mapRef.current.getCenter() : { lat: 12.8438, lng: 80.0576 };
-    setList([...list, { id: "z" + Date.now(), name: "New zone", lat: +c.lat.toFixed(6), lng: +c.lng.toFixed(6), radiusKm: 5, active: true }]);
-    setSel(list.length);
+    setList([...list, { id: "z" + Date.now(), name: "New circle zone", shape: "circle", lat: +c.lat.toFixed(6), lng: +c.lng.toFixed(6), radiusKm: 5, active: true }]);
+    setSel(list.length); setDrawing(false);
   };
+  const addPoly = () => {
+    setList([...list, { id: "z" + Date.now(), name: "New drawn zone", shape: "poly", points: [], active: true }]);
+    setSel(list.length); setDrawing(true);
+  };
+  const cur = list[sel];
+  const isP = cur && cur.shape === "poly";
 
   return (
     <Modal close={close}>
       <h3 className="display" style={{ fontWeight: 800, margin: "0 0 4px" }}>Delivery zones (geofence)</h3>
-      <p style={{ fontSize: 12.5, color: "#6b675e", margin: "0 0 10px" }}>
-        Customers can order only if their map pin falls inside a green circle. Select a zone below, then <b>tap the map</b> to move its centre.
+      <p style={{ fontSize: 12.5, color: "#6b675e", margin: "0 0 8px" }}>
+        Draw your area street by street, or use a simple radius circle. Orders are accepted only inside these shapes.
       </p>
-      {!failed && <div ref={boxRef} style={{ height: 280, borderRadius: 12, overflow: "hidden", border: "1px solid #E5DFD0", background: "#EFEAE0" }} />}
-      {failed && <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 10, padding: 12, fontSize: 13 }}>Map couldn't load — you can still type coordinates manually below.</div>}
+
+      {isP && (
+        <div style={{ background: drawing ? "#FDF0EE" : "#F6F2E8", border: "1.5px solid " + (drawing ? BRAND.red : "#E5DFD0"), borderRadius: 10, padding: "9px 12px", marginBottom: 8, fontSize: 12.5, fontWeight: 700 }}>
+          {drawing
+            ? "✏️ Drawing ON — tap each street corner on the map to trace your boundary. Tap 'Done drawing' when the shape is closed."
+            : "Drag the numbered points to fine-tune. Turn drawing on to add more corners."}
+          <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+            <button onClick={() => setDrawing(!drawing)} style={{ background: drawing ? BRAND.ok : BRAND.red, color: "#fff", border: "none", borderRadius: 8, padding: "7px 13px", fontWeight: 800, fontSize: 12, cursor: "pointer" }}>
+              {drawing ? "✓ Done drawing" : "✏️ Continue drawing"}
+            </button>
+            <button onClick={() => upd(sel, { points: (cur.points || []).slice(0, -1) })} style={{ background: "#f0ece1", border: "none", borderRadius: 8, padding: "7px 13px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>↩ Undo point</button>
+            <button onClick={() => upd(sel, { points: [] })} style={{ background: "#fbe9e7", color: BRAND.danger, border: "none", borderRadius: 8, padding: "7px 13px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Clear all</button>
+            <span style={{ alignSelf: "center", fontSize: 11.5, color: (cur.points || []).length >= 3 ? BRAND.ok : BRAND.danger }}>
+              {(cur.points || []).length} point(s){(cur.points || []).length < 3 ? " — need at least 3" : " ✓"}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {!failed && <div ref={boxRef} style={{ height: 300, borderRadius: 12, overflow: "hidden", border: "1px solid #E5DFD0", background: "#EFEAE0" }} />}
+      {failed && <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 10, padding: 12, fontSize: 13 }}>Map couldn't load — check your connection.</div>}
 
       <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
         {list.map((z, i) => (
-          <div key={z.id || i} onClick={() => setSel(i)}
+          <div key={z.id || i} onClick={() => { setSel(i); if (z.shape !== "poly") setDrawing(false); }}
             style={{ background: i === sel ? "#FDF0EE" : "#FBF7EF", border: "2px solid " + (i === sel ? BRAND.red : "transparent"), borderRadius: 10, padding: 10, cursor: "pointer" }}>
             <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
-              <span style={{ fontSize: 15 }}>{i === sel ? "🎯" : "📍"}</span>
-              <input value={z.name || ""} onChange={(e) => upd(i, { name: e.target.value })} placeholder="Zone name (e.g. Guduvanchery core)"
+              <span style={{ fontSize: 14 }}>{z.shape === "poly" ? "✏️" : "⭕"}</span>
+              <input value={z.name || ""} onChange={(e) => upd(i, { name: e.target.value })} placeholder="Zone name (e.g. Guduvanchery main road block)"
                 style={{ ...inp, padding: "7px 10px", fontSize: 13, fontWeight: 700 }} />
-              <button onClick={(e) => { e.stopPropagation(); if (window.confirm("Delete this zone?")) { setList(list.filter((_, j) => j !== i)); setSel(0); } }}
+              <button onClick={(e) => { e.stopPropagation(); if (window.confirm("Delete this zone?")) { setList(list.filter((_, j) => j !== i)); setSel(0); setDrawing(false); } }}
                 style={{ background: "#fbe9e7", color: BRAND.danger, border: "none", borderRadius: 7, padding: "6px 10px", fontWeight: 800, cursor: "pointer" }}>✕</button>
             </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <label style={{ fontSize: 12, fontWeight: 700, display: "flex", gap: 5, alignItems: "center" }}>
-                Radius
-                <input type="number" min={0.5} step={0.5} value={z.radiusKm || 5} onChange={(e) => upd(i, { radiusKm: Number(e.target.value) || 1 })}
-                  style={{ ...inp, width: 72, padding: "6px 8px", fontSize: 13 }} /> km
-              </label>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              {z.shape === "poly" ? (
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#6b675e" }}>Drawn boundary · {(z.points || []).length} points</span>
+              ) : (
+                <label style={{ fontSize: 12, fontWeight: 700, display: "flex", gap: 5, alignItems: "center" }}>
+                  Radius
+                  <input type="number" min={0.5} step={0.5} value={z.radiusKm || 5} onChange={(e) => upd(i, { radiusKm: Number(e.target.value) || 1 })}
+                    style={{ ...inp, width: 70, padding: "6px 8px", fontSize: 13 }} /> km
+                </label>
+              )}
               <label style={{ fontSize: 12, fontWeight: 700, display: "flex", gap: 5, alignItems: "center", color: z.active !== false ? BRAND.ok : BRAND.danger }}>
                 <input type="checkbox" checked={z.active !== false} onChange={() => upd(i, { active: z.active === false })} />
                 {z.active !== false ? "Active" : "Paused"}
               </label>
-              <span style={{ fontSize: 11, color: "#8a857a", marginLeft: "auto" }}>{z.lat ? z.lat + ", " + z.lng : "tap map to set centre"}</span>
             </div>
           </div>
         ))}
       </div>
 
-      <button onClick={addZone} style={{ width: "100%", marginTop: 10, background: "#fff", border: "1.5px dashed " + BRAND.red, color: BRAND.red, borderRadius: 10, padding: 11, fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
-        + Add zone at map centre
-      </button>
-      <button onClick={() => onSave(list.filter((z) => z.lat && z.lng && z.radiusKm > 0))}
-        style={{ width: "100%", marginTop: 8, background: BRAND.red, color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 800, cursor: "pointer" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
+        <button onClick={addPoly} style={{ background: BRAND.red, color: "#fff", border: "none", borderRadius: 10, padding: 11, fontWeight: 800, fontSize: 13, cursor: "pointer" }}>✏️ Draw new zone</button>
+        <button onClick={addCircle} style={{ background: "#fff", border: "1.5px dashed " + BRAND.red, color: BRAND.red, borderRadius: 10, padding: 11, fontWeight: 800, fontSize: 13, cursor: "pointer" }}>⭕ Add radius zone</button>
+      </div>
+      <button onClick={() => onSave(list.filter((z) => (z.shape === "poly" ? (z.points || []).length >= 3 : z.lat && z.lng && z.radiusKm > 0)))}
+        style={{ width: "100%", marginTop: 8, background: BRAND.ok, color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 800, cursor: "pointer" }}>
         Save & publish zones
       </button>
       <p style={{ fontSize: 11.5, color: "#8a857a", marginTop: 8, marginBottom: 0 }}>
-        No active zones = geofencing off, and the pincode list is used instead.
+        Drawn zones need 3+ points to save. No active zones = geofencing off (pincode list used instead).
       </p>
     </Modal>
   );
@@ -882,7 +939,7 @@ function Settings({ settings, save, zones, saveZones }) {
         <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 2 }}>🗺️ Delivery zones (geofence)</div>
         <div style={{ fontSize: 12.5, color: "#6b675e", marginBottom: 8 }}>
           {activeZones.length
-            ? `${activeZones.length} active zone(s): ${activeZones.map((z) => (z.name || "zone") + " " + z.radiusKm + "km").join(", ")}. Orders are accepted only inside these areas.`
+            ? `${activeZones.length} active zone(s): ${activeZones.map((z) => (z.name || "zone") + (z.shape === "poly" ? " (drawn)" : " " + z.radiusKm + "km")).join(", ")}. Orders are accepted only inside these areas.`
             : "No zones set — customers are checked by pincode only, which can include areas you don't actually serve."}
         </div>
         <button onClick={() => setZoneOpen(true)} style={{ background: BRAND.red, color: "#fff", border: "none", borderRadius: 10, padding: "10px 16px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
