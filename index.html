@@ -1,10 +1,12 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Hunt & Eat — Fresh Country Chicken | Order Online</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700;9..144,800&family=Inter:wght@400;500;600;700;800&family=Dancing+Script:wght@600;700&display=swap" rel="stylesheet">
 <link rel="manifest" href="./manifest.webmanifest" />
 <meta name="theme-color" content="#A6212E" />
 <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
@@ -93,7 +95,7 @@ FIREBASE_RTDB_URL ? {
   async list() { return { keys: [] }; },
 };
 </script>
-<style>html,body{margin:0;padding:0}</style>
+<style>html,body{margin:0;padding:0;font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif}</style>
 </head>
 <body>
 <div id="root">
@@ -316,8 +318,7 @@ function App() {
   return (
     <div style={{ minHeight: "100vh", background: BRAND.cream, fontFamily: "'Inter','Segoe UI',system-ui,sans-serif", color: BRAND.ink }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700;9..144,800&family=Inter:wght@400;500;600;700;800&family=Dancing+Script:wght@600;700&display=swap');
-        .display { font-family: 'Fraunces', Georgia, 'Times New Roman', serif; font-optical-sizing: auto; letter-spacing: -0.01em; }
+                .display { font-family: 'Fraunces', Georgia, 'Times New Roman', serif; font-optical-sizing: auto; letter-spacing: -0.01em; }
         .script { font-family: 'Dancing Script', 'Segoe Script', cursive; }
         * { -webkit-tap-highlight-color: transparent; }
         ::-webkit-scrollbar { height: 6px; width: 8px; }
@@ -738,4 +739,369 @@ function MapPicker({ initial, zones, onSave, close }) {
       marker.on("dragend", () => upd(marker.getLatLng()));
       map.on("click", (e) => { marker.setLatLng(e.latlng); upd(e.latlng); });
       mapRef.current = map; markRef.current = marker;
-      setNote(""); if (!initia
+      setNote(""); if (!initial) setPos({ lat: start.lat, lng: start.lng });
+      setMapReady(true);
+      setTimeout(() => map.invalidateSize(), 250);
+    }).catch(() => { setFailed(true); setNote(""); });
+    return () => { alive = false; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; } };
+  }, []);
+
+  // draw ONLY the delivery zone nearest to the customer — keeps their map clean
+  useEffect(() => {
+    const ctx = zoneLayerRef.current;
+    if (!ctx) return;
+    const { L, map } = ctx;
+    const ref = pos || initial || DEFAULT_PIN;
+    const z = nearestZone(ref, zones);
+    if (!z) return;
+    if (drawnRef.current && drawnRef.current.id === z.id) return; // already showing it
+    if (drawnRef.current) map.removeLayer(drawnRef.current.layer);
+    const style = { color: "#177245", weight: 2.5, fillColor: "#2E8B57", fillOpacity: 0.12 };
+    const layer = isPoly(z)
+      ? L.polygon(z.points.map((p) => [p.lat, p.lng]), style)
+      : L.circle([z.lat, z.lng], { ...style, radius: z.radiusKm * 1000 });
+    layer.addTo(map).bindTooltip(z.name || "Our delivery area");
+    drawnRef.current = { id: z.id, layer };
+    if (!initial && !pos) map.fitBounds(layer.getBounds(), { padding: [24, 24], maxZoom: 15 });
+  }, [pos, zones, mapReady]);
+
+  const locateMe = () => {
+    if (!navigator.geolocation) return setNote("GPS not supported on this device.");
+    setNote("Finding your location…");
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        const ll = { lat: +p.coords.latitude.toFixed(6), lng: +p.coords.longitude.toFixed(6) };
+        setPos(ll); setNote("");
+        if (mapRef.current && markRef.current) { mapRef.current.setView([ll.lat, ll.lng], 17); markRef.current.setLatLng([ll.lat, ll.lng]); }
+      },
+      () => setNote("Couldn't get GPS — allow location access, or drag the pin yourself."),
+      { enableHighAccuracy: true, timeout: 9000 }
+    );
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(14,10,8,.6)", zIndex: 70, display: "grid", placeItems: "center", padding: 12 }} onClick={close}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, width: "min(460px,100%)", padding: 16, boxSizing: "border-box" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <b className="display" style={{ fontSize: 18 }}>Pin your delivery location</b>
+          <button onClick={close} style={{ background: "#f0ece1", border: "none", borderRadius: 999, width: 30, height: 30, cursor: "pointer", fontWeight: 700 }}>✕</button>
+        </div>
+        <div style={{ fontSize: 12.5, color: "#6b675e", marginBottom: 8 }}>Drag the 📍 pin or tap the map to place it exactly at your gate or building entrance.</div>
+        {!failed && <div ref={boxRef} style={{ height: 300, width: "100%", borderRadius: 12, overflow: "hidden", border: "1px solid #E5DFD0", background: "#EFEAE0" }} />}
+        {failed && <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 10, padding: 12, fontSize: 13 }}>Map couldn't load (weak connection). You can still share your GPS location using the button below.</div>}
+        {note && <div style={{ fontSize: 12.5, color: BRAND.green, fontWeight: 700, marginTop: 8 }}>{note}</div>}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
+          <button onClick={locateMe} type="button" style={{ background: "#fff", border: "1.5px solid " + BRAND.green, color: BRAND.green, borderRadius: 10, padding: "11px 8px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>🎯 Use my GPS</button>
+          <button onClick={() => pos && onSave(pos)} type="button" disabled={!pos}
+            style={{ background: pos ? BRAND.green : "#ccc", color: "#fff", border: "none", borderRadius: 10, padding: "11px 8px", fontWeight: 800, fontSize: 13, cursor: pos ? "pointer" : "not-allowed" }}>✓ Confirm location</button>
+        </div>
+        {(() => {
+          const zc = checkZones(pos, zones);
+          if (!zc) return null;
+          return zc.inside ? (
+            <div style={{ background: "#EAF6EE", color: "#177245", borderRadius: 8, padding: "8px 10px", fontSize: 12.5, fontWeight: 800, marginTop: 8, textAlign: "center" }}>
+              ✓ Great — we deliver here ({zc.zone.name || "service area"})
+            </div>
+          ) : (
+            <div style={{ background: "#FBE9E7", color: "#8E1B25", borderRadius: 8, padding: "8px 10px", fontSize: 12.5, fontWeight: 700, marginTop: 8, textAlign: "center" }}>
+              ✕ Outside our delivery area — the nearest point of {zc.zone.name || "our delivery area"} is about {zc.dist.toFixed(1)} km away. Move the pin inside the green area.
+            </div>
+          );
+        })()}
+        {pos && <div style={{ fontSize: 11, color: "#8a857a", textAlign: "center", marginTop: 6 }}>Pin: {pos.lat}, {pos.lng}</div>}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- checkout ---------------- */
+function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders, zones, back, done }) {
+  const activeZones = (zones || []).filter(zoneValid);
+  const allowedDays = settings.deliveryDays && settings.deliveryDays.length ? settings.deliveryDays : [0];
+  const days = [];
+  for (let i = 0; i < (settings.daysAhead || 14) && days.length < 8; i++) {
+    const d = new Date(); d.setDate(d.getDate() + i);
+    if (!allowedDays.includes(d.getDay())) continue;
+    days.push({ key: dkey(d), label: i === 0 ? "Today" : d.toLocaleDateString("en-IN", { weekday: "short" }), sub: d.toLocaleDateString("en-IN", { day: "numeric", month: "short" }) });
+  }
+  const [day, setDay] = useState(days[0] ? days[0].key : "");
+  const [slotId, setSlotId] = useState(null);
+  const [form, setForm] = useState({ name: "", phone: "", address: "", pincode: "", pay: "cod" });
+  const [err, setErr] = useState("");
+  const [locBusy, setLocBusy] = useState(false);
+  const [mapOpen, setMapOpen] = useState(false);
+
+  const captureLoc = () => {
+    if (!navigator.geolocation) return setErr("GPS not supported on this device — you can continue without it.");
+    setLocBusy(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { setForm((f) => ({ ...f, loc: { lat: +pos.coords.latitude.toFixed(6), lng: +pos.coords.longitude.toFixed(6) } })); setLocBusy(false); setErr(""); },
+      () => { setLocBusy(false); setErr("Couldn't get GPS — allow location access in your browser, or continue without it."); },
+      { enableHighAccuracy: true, timeout: 9000 }
+    );
+  };
+
+  const now = new Date();
+  const slotState = (s) => {
+    if (!s.active) return { ok: false, why: "Unavailable" };
+    if (day === days[0].key && now.getHours() >= s.start - settings.cutoffHours) return { ok: false, why: "Cut-off passed" };
+    const booked = orders.filter((o) => o.slotDate === day && o.slotId === s.id && o.status !== "Cancelled").length;
+    if (booked >= s.capacity) return { ok: false, why: "Slot full" };
+    return { ok: true, left: s.capacity - booked };
+  };
+
+  const place = () => {
+    const ph = form.phone.replace(/\D/g, "").slice(-10);
+    if (!form.name.trim()) return setErr("Please enter your full name.");
+    if (!/^[6-9]\d{9}$/.test(ph)) return setErr("Please enter a valid 10-digit mobile number — it's required so our rider can reach you.");
+    if (!form.address.trim()) return setErr("Please enter your full delivery address.");
+    if (!/^\d{6}$/.test(form.pincode.trim())) return setErr("Please enter a valid 6-digit pincode.");
+    if (activeZones.length) {
+      if (!form.loc) return setErr("Please set your delivery location on the map — we serve only inside our delivery area.");
+      const zc = checkZones(form.loc, zones);
+      if (!zc.inside) return setErr(`Sorry, your location is outside our delivery area (nearest point about ${zc.dist.toFixed(1)} km away). Please WhatsApp us — we may still be able to help.`);
+    } else {
+      const serviceable = settings.pincodes.split(",").map((x) => x.trim());
+      if (!serviceable.includes(form.pincode.trim()))
+        return setErr(`Sorry, we don't deliver to ${form.pincode} yet. We serve: ${settings.pincodes}`);
+    }
+    if (!slotId) return setErr("Please pick a delivery slot.");
+    const slot = slots.find((s) => s.id === slotId);
+    const id = "HE" + Date.now().toString().slice(-6);
+    done({
+      id, items: cartItems.map(({ p, qty }) => ({ name: p.name, qty, price: p.price })),
+      subtotal, delFee, total, ...form,
+      slotDate: day, slotId, slotLabel: slot.label,
+      status: "Order received", placedAt: new Date().toISOString(),
+    });
+  };
+
+  return (
+    <Drawer title="Checkout" close={back} backLabel="← Basket">
+      <SectionLabel n="1" t="Delivery slot" />
+      <div style={{ fontSize: 12, color: "#7a6a4f", margin: "-4px 0 8px", fontWeight: 600 }}>
+        We deliver on: {allowedDays.slice().sort().map((i) => ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][i]).join(", ")}
+      </div>
+      {days.length === 0 && <div style={{ color: BRAND.red, fontSize: 13, marginBottom: 10, fontWeight: 600 }}>No delivery dates are open right now — please WhatsApp us to arrange your order.</div>}
+      <div style={{ display: "flex", gap: 8, marginBottom: 10, overflowX: "auto", paddingBottom: 4 }}>
+        {days.map((d) => (
+          <button key={d.key} onClick={() => { setDay(d.key); setSlotId(null); }}
+            style={{ flex: "0 0 auto", minWidth: 86, border: "2px solid " + (day === d.key ? BRAND.green : "#e5dfd0"), background: day === d.key ? BRAND.green : "#fff", color: day === d.key ? "#fff" : BRAND.ink, borderRadius: 10, padding: "8px 4px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+            {d.label}<div style={{ fontSize: 11, fontWeight: 500, opacity: 0.8 }}>{d.sub}</div>
+          </button>
+        ))}
+      </div>
+      <div style={{ display: "grid", gap: 8, marginBottom: 18 }}>
+        {slots.map((s) => {
+          const st = slotState(s);
+          const sel = slotId === s.id;
+          return (
+            <button key={s.id} disabled={!st.ok} onClick={() => setSlotId(s.id)}
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", border: "2px solid " + (sel ? BRAND.green : "#e5dfd0"), background: sel ? "#FCEFEA" : st.ok ? "#fff" : "#f3f0e8", borderRadius: 10, padding: "10px 14px", cursor: st.ok ? "pointer" : "not-allowed", fontSize: 14, fontWeight: 600, color: st.ok ? BRAND.ink : "#a39e93" }}>
+              <span>🕐 {s.label}</span>
+              <span style={{ fontSize: 12, fontWeight: 600 }}>{st.ok ? (st.left <= 5 ? `${st.left} left` : "Available") : st.why}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <SectionLabel n="2" t="Delivery details" />
+      <div style={{ fontSize: 11.5, color: "#8a857a", fontWeight: 600, margin: "-4px 0 10px" }}>
+        Fields marked <span style={{ color: "#D33", fontWeight: 800 }}>*</span> are required
+      </div>
+      <div style={{ display: "grid", gap: 12, marginBottom: 18 }}>
+        <label style={fieldLbl}>
+          <span>Full name<Req /></span>
+          <input placeholder="Your name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={inp} />
+        </label>
+
+        <label style={fieldLbl}>
+          <span>Mobile number<Req /></span>
+          <div style={{ display: "flex", alignItems: "stretch", border: "1.5px solid #e5dfd0", borderRadius: 10, overflow: "hidden", background: "#fff" }}>
+            <span style={{ background: "#F6EADB", padding: "0 13px", fontWeight: 800, fontSize: 14, color: BRAND.green, display: "flex", alignItems: "center", borderRight: "1.5px solid #e5dfd0" }}>+91</span>
+            <input inputMode="numeric" type="tel" maxLength={10} placeholder="10-digit mobile number" value={form.phone}
+              onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })}
+              style={{ ...inp, border: "none", borderRadius: 0, flex: 1, letterSpacing: 1 }} />
+          </div>
+          <span style={{ fontSize: 11.5, color: "#8a857a", fontWeight: 500 }}>Order updates and rider calls come to this number</span>
+        </label>
+
+        <label style={fieldLbl}>
+          <span>Full address<Req /></span>
+          <textarea placeholder="Flat / door no, block, apartment name, street, landmark" rows={2} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} style={{ ...inp, resize: "vertical" }} />
+        </label>
+
+        <label style={fieldLbl}>
+          <span>Pincode<Req /></span>
+          <input inputMode="numeric" maxLength={6} placeholder="6-digit pincode" value={form.pincode}
+            onChange={(e) => setForm({ ...form, pincode: e.target.value.replace(/\D/g, "").slice(0, 6) })} style={inp} />
+        </label>
+
+        <div style={{ display: "grid", gap: 5 }}>
+          <span style={{ fontSize: 13, fontWeight: 700 }}>Map location <span style={{ fontWeight: 500, color: "#8a857a", fontSize: 11.5 }}>(recommended — helps our rider reach you fast)</span></span>
+          {form.loc ? (
+            <div style={{ border: "2px solid #177245", background: "#EAF6EE", borderRadius: 10, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ fontWeight: 800, color: "#177245", fontSize: 13 }}>📍 Location pinned ✓</span>
+              <span style={{ fontSize: 11, color: "#5c584e" }}>{form.loc.lat}, {form.loc.lng}</span>
+              <button type="button" onClick={() => setMapOpen(true)} style={{ marginLeft: "auto", background: "#177245", color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontWeight: 800, fontSize: 12, cursor: "pointer" }}>View / Edit pin</button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setMapOpen(true)}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, border: "2px dashed " + BRAND.green, background: "#FDF7F1", color: BRAND.green, borderRadius: 10, padding: "12px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+              🗺️ Set your location on map
+            </button>
+          )}
+          {activeZones.length > 0 && (() => {
+            const zc = checkZones(form.loc, zones);
+            if (!form.loc) return (
+              <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 8, padding: "9px 12px", fontSize: 12.5, fontWeight: 700, color: "#8E6A1F" }}>
+                📍 Please set your location on the map — we deliver only inside our service area.
+              </div>
+            );
+            return zc.inside ? (
+              <div style={{ background: "#EAF6EE", border: "1px solid #BEDFC8", borderRadius: 8, padding: "9px 12px", fontSize: 12.5, fontWeight: 800, color: "#177245" }}>
+                ✓ We deliver to your location — {zc.zone.name || "service area"} ({zc.dist.toFixed(1)} km from us)
+              </div>
+            ) : (
+              <div style={{ background: "#FBE9E7", border: "1px solid #F0C0BA", borderRadius: 8, padding: "9px 12px", fontSize: 12.5, fontWeight: 700, color: "#8E1B25" }}>
+                ✕ Sorry, this location is outside our delivery area (nearest point about {zc.dist.toFixed(1)} km away).{" "}
+                <a href={`https://wa.me/91${(settings.phone || "").replace(/\D/g, "").slice(-10)}?text=${encodeURIComponent("Hi Hunt & Eat, do you deliver to my area? My location: https://www.google.com/maps?q=" + form.loc.lat + "," + form.loc.lng)}`}
+                  target="_blank" rel="noreferrer" style={{ color: "#1FA855", fontWeight: 800 }}>Ask us on WhatsApp →</a>
+              </div>
+            );
+          })()}
+        </div>
+      </div>
+
+      <SectionLabel n="3" t="Payment" />
+      <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
+        {[["cod", "💵 Cash on delivery"], ["upi", "📱 UPI on delivery (GPay / PhonePe)"]].map(([v, l]) => (
+          <label key={v} style={{ display: "flex", gap: 10, alignItems: "center", border: "2px solid " + (form.pay === v ? BRAND.green : "#e5dfd0"), borderRadius: 10, padding: "10px 14px", cursor: "pointer", fontSize: 14, fontWeight: 600, background: form.pay === v ? "#eef5f0" : "#fff" }}>
+            <input type="radio" checked={form.pay === v} onChange={() => setForm({ ...form, pay: v })} />{l}
+          </label>
+        ))}
+      </div>
+
+      <div style={{ background: "#faf7f0", borderRadius: 10, padding: "10px 14px", fontSize: 14, marginBottom: 14 }}>
+        <Row l="Item total" r={rup(subtotal)} />
+        <Row l="Delivery" r={delFee === 0 ? "FREE" : rup(delFee)} green={delFee === 0} />
+        <Row l={<b>To pay</b>} r={<b>{rup(total)}</b>} />
+      </div>
+      {err && <div style={{ color: BRAND.red, fontSize: 13, marginBottom: 10, fontWeight: 600 }}>{err}</div>}
+      <button onClick={place} style={{ width: "100%", background: BRAND.green, color: "#fff", border: "none", borderRadius: 12, padding: 14, fontWeight: 800, fontSize: 15, cursor: "pointer" }}>
+        Place order — {rup(total)}
+      </button>
+      {mapOpen && <MapPicker initial={form.loc} zones={zones} close={() => setMapOpen(false)}
+        onSave={(ll) => { setForm((f) => ({ ...f, loc: ll })); setMapOpen(false); setErr(""); }} />}
+    </Drawer>
+  );
+}
+const inp = { padding: "11px 14px", borderRadius: 10, border: "1.5px solid #e5dfd0", fontSize: 14, outline: "none", fontFamily: "inherit", boxSizing: "border-box", width: "100%" };
+const SectionLabel = ({ n, t }) => (
+  <div style={{ display: "flex", gap: 8, alignItems: "center", margin: "0 0 10px" }}>
+    <span style={{ background: BRAND.green, color: "#fff", width: 22, height: 22, borderRadius: 999, display: "grid", placeItems: "center", fontSize: 12, fontWeight: 800 }}>{n}</span>
+    <span className="display" style={{ fontWeight: 800, fontSize: 16 }}>{t}</span>
+  </div>
+);
+
+function Success({ order, settings, close }) {
+  const waNumber = (settings?.phone || "").replace(/\D/g, "").slice(-10);
+  const waText = encodeURIComponent(
+    `🐓 *Hunt & Eat — New Order ${order.id}*\n` +
+    order.items.map((i) => `• ${i.name} ×${i.qty} — ${rup(i.price * i.qty)}`).join("\n") +
+    `\nTotal: *${rup(order.total)}* (${order.pay === "cod" ? "COD" : "UPI on delivery"})` +
+    `\nSlot: ${order.slotDate} · ${order.slotLabel}` +
+    `\nName: ${order.name} · 📞 ${order.phone}` +
+    `\nAddress: ${order.address}, ${order.pincode}` +
+    (order.loc ? `\n📍 Map: https://www.google.com/maps?q=${order.loc.lat},${order.loc.lng}` : "")
+  );
+  return (
+    <Modal close={close}>
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 56 }}>✅</div>
+        <h3 className="display" style={{ fontWeight: 800, fontSize: 22, margin: "8px 0 4px" }}>Order placed!</h3>
+        <div style={{ fontSize: 14, color: "#5c584e" }}>Order ID</div>
+        <div className="display" style={{ fontSize: 26, fontWeight: 800, color: BRAND.green, letterSpacing: 1 }}>{order.id}</div>
+        <div style={{ background: "#faf7f0", borderRadius: 10, padding: 12, margin: "14px 0", fontSize: 14, textAlign: "left" }}>
+          <Row l="Slot" r={`${order.slotDate} · ${order.slotLabel}`} />
+          <Row l="Payment" r={order.pay === "cod" ? "Cash on delivery" : "UPI on delivery"} />
+          <Row l={<b>To pay</b>} r={<b>{rup(order.total)}</b>} />
+        </div>
+        <a href={`https://wa.me/91${waNumber}?text=${waText}`} target="_blank" rel="noreferrer"
+          style={{ display: "block", background: "#1FA855", color: "#fff", borderRadius: 12, padding: 13, fontWeight: 700, fontSize: 15, textDecoration: "none", marginBottom: 10 }}>
+          📲 Confirm on WhatsApp
+        </a>
+        <p style={{ fontSize: 12, color: "#8a857a", margin: "0 0 10px" }}>Tap above to send your order to our kitchen on WhatsApp — this confirms it fastest.</p>
+        <button onClick={close} style={{ width: "100%", background: BRAND.green, color: "#fff", border: "none", borderRadius: 12, padding: 13, fontWeight: 700, fontSize: 15, cursor: "pointer" }}>Continue shopping</button>
+      </div>
+    </Modal>
+  );
+}
+
+function Track({ orders, close }) {
+  const [q, setQ] = useState("");
+  const [found, setFound] = useState(null);
+  const search = () => {
+    const o = orders.find((x) => x.id.toLowerCase() === q.trim().toLowerCase() || x.phone.replace(/\D/g, "").endsWith(q.replace(/\D/g, "")) && q.trim().length >= 10);
+    setFound(o || "none");
+  };
+  return (
+    <Modal close={close}>
+      <h3 className="display" style={{ fontWeight: 800, fontSize: 20, margin: "0 0 4px" }}>🔍 Freshness Tracker</h3>
+      <p style={{ fontSize: 13, color: "#5c584e", margin: "0 0 12px" }}>Enter your order ID (e.g. HE123456) or phone number.</p>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Order ID or phone" style={{ ...inp, flex: 1 }} />
+        <button onClick={search} style={{ background: BRAND.green, color: "#fff", border: "none", borderRadius: 10, padding: "0 18px", fontWeight: 700, cursor: "pointer" }}>Track</button>
+      </div>
+      {found === "none" && <div style={{ color: BRAND.red, fontSize: 13, marginTop: 10 }}>No order found. Check the ID and try again.</div>}
+      {found && found !== "none" && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontWeight: 700, marginBottom: 10 }}>{found.id} · {rup(found.total)} · {found.slotLabel}</div>
+          {found.status === "Cancelled" ? (
+            <div style={{ color: BRAND.red, fontWeight: 700 }}>This order was cancelled.</div>
+          ) : STATUSES.map((s, i) => {
+            const idx = STATUSES.indexOf(found.status);
+            const on = i <= idx;
+            return (
+              <div key={s} style={{ display: "flex", gap: 10, alignItems: "center", padding: "6px 0" }}>
+                <span style={{ width: 22, height: 22, borderRadius: 999, background: on ? BRAND.green : "#e5dfd0", color: "#fff", display: "grid", placeItems: "center", fontSize: 12 }}>{on ? "✓" : ""}</span>
+                <span style={{ fontWeight: on ? 700 : 500, color: on ? BRAND.ink : "#a39e93" }}>{["📋", "🔪", "📦", "🛵", "🏠"][i]} {s}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+/* ---------------- shared UI ---------------- */
+function Drawer({ title, close, backLabel, children }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(14,43,29,.5)", zIndex: 50, display: "flex", justifyContent: "flex-end" }} onClick={close}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", width: "min(440px,100%)", height: "100%", overflowY: "auto", padding: 20, boxSizing: "border-box" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <h3 className="display" style={{ margin: 0, fontWeight: 800, fontSize: 20 }}>{title}</h3>
+          <button onClick={close} style={{ background: "#f0ece1", border: "none", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>{backLabel || "✕ Close"}</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+function Modal({ close, children }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(14,43,29,.5)", zIndex: 60, display: "grid", placeItems: "center", padding: 16 }} onClick={close}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, width: "min(420px,100%)", maxHeight: "90vh", overflowY: "auto", padding: 20, boxSizing: "border-box", position: "relative" }}>
+        <button onClick={close} style={{ position: "absolute", top: 10, right: 10, background: "#f0ece1", border: "none", borderRadius: 999, width: 30, height: 30, cursor: "pointer", fontWeight: 700 }}>✕</button>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
