@@ -353,7 +353,7 @@ function AdminApp() {
   const revenue = active.filter((o) => o.status === "Delivered").reduce((s, o) => s + o.total, 0);
   const todayRevenue = todays.reduce((s, o) => s + o.total, 0);
 
-  const tabs = [["dash", "📊 Dashboard"], ["orders", `📦 Orders${newOrders ? ` (+${newOrders} new)` : ""}`], ["menu", "🍗 Menu"], ["visits", "📈 Visitors"], ["cash", "💰 Cash"], ["slots", "🕐 Slots"], ["settings", "⚙️ Settings"]];
+  const tabs = [["dash", "📊 Dashboard"], ["orders", `📦 Orders${newOrders ? ` (+${newOrders} new)` : ""}`], ["menu", "🍗 Menu"], ["customers", "👥 Customers"], ["visits", "📈 Visitors"], ["demand", "📍 Demand map"], ["cash", "💰 Cash"], ["slots", "🕐 Slots"], ["settings", "⚙️ Settings"]];
 
   return (
     <Shell>
@@ -363,7 +363,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v3.4</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v3.7</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -451,7 +451,9 @@ function AdminApp() {
         )}
         {tab === "orders" && <Orders orders={orders} saveOrders={saveOrders} />}
         {tab === "menu" && <Menu products={products} cats={categories} save={(p) => saveCore({ products: p })} saveCats={(c) => saveCore({ categories: c })} />}
+        {tab === "customers" && <Customers orders={orders} />}
         {tab === "visits" && <Visitors orders={orders} />}
+        {tab === "demand" && <Demand zones={core?.zones || []} />}
         {tab === "cash" && <Cash orders={orders} saveOrders={saveOrders} />}
         {tab === "slots" && <Slots slots={slots} save={(s) => saveCore({ slots: s })} />}
         {tab === "settings" && <Settings settings={settings} save={(s) => saveCore({ settings: s })} zones={core?.zones || []} saveZones={(z) => saveCore({ zones: z })} />}
@@ -551,6 +553,72 @@ function RiderAssign({ o, onSave }) {
 }
 
 /* ---------------- Orders ---------------- */
+/* ---- Delivery run sheet: every selected order, full customer details ---- */
+function printDeliverySheet(list, brand) {
+  const cod = list.filter((o) => o.pay === "cod").reduce((s, o) => s + o.total, 0);
+  const upi = list.filter((o) => o.pay !== "cod").reduce((s, o) => s + o.total, 0);
+  const rows = list.map((o, i) =>
+    "<tr>" +
+    "<td>" + (i + 1) + "</td>" +
+    "<td><b>" + o.id + "</b><div class='s'>" + (o.slotLabel || "") + "</div></td>" +
+    "<td><b>" + (o.name || "") + "</b><div class='s'>" + (o.phone || "") + "</div></td>" +
+    "<td class='ad'>" + (o.address || "") + (o.pincode ? " - " + o.pincode : "") + (o.rider ? "<div class='s'>Rider: " + o.rider + "</div>" : "") + "</td>" +
+    "<td class='it'>" + (o.items || []).map((x) => x.qty + "× " + x.name).join("<br>") + "</td>" +
+    "<td class='amt'><b>" + rup(o.total) + "</b><div class='s'>" + (o.pay === "cod" ? "CASH" : "UPI") + "</div></td>" +
+    "<td class='tick'>&#9744;</td>" +
+    "</tr>"
+  ).join("");
+  const html = "<!DOCTYPE html><html><head><title>Delivery sheet</title><style>" +
+    "@page{size:A4;margin:10mm}body{font-family:Arial,Helvetica,sans-serif;color:#000;margin:0}" +
+    "h2{text-align:center;margin:2px 0}.c{text-align:center}.s{font-size:10px;color:#444}" +
+    "table{width:100%;border-collapse:collapse;margin-top:8px}" +
+    "th{background:#eee;font-size:11px;text-align:left;padding:5px;border:1px solid #999}" +
+    "td{font-size:11.5px;padding:6px 5px;border:1px solid #bbb;vertical-align:top}" +
+    ".ad{width:26%}.it{width:22%}.amt{width:9%;text-align:right}.tick{width:5%;text-align:center;font-size:18px}" +
+    ".tot{margin-top:8px;font-size:13px;font-weight:bold;display:flex;justify-content:space-between}" +
+    "</style></head><body>" +
+    "<h2>" + brand + "</h2>" +
+    "<div class='c s'><b>DELIVERY RUN SHEET</b> &middot; " + new Date().toLocaleString("en-IN") + " &middot; " + list.length + " order(s)</div>" +
+    "<table><tr><th>#</th><th>Order / Slot</th><th>Customer</th><th>Address</th><th>Items</th><th>Amount</th><th>Done</th></tr>" +
+    rows + "</table>" +
+    "<div class='tot'><span>CASH to collect: " + rup(cod) + "</span><span>UPI: " + rup(upi) + "</span><span>TOTAL: " + rup(cod + upi) + "</span></div>" +
+    "<div class='s' style='margin-top:14px'>Rider signature: ____________________   Cash handed over: ____________   Date: __________</div>" +
+    "<scr" + "ipt>window.onload=function(){window.print()}</scr" + "ipt></body></html>";
+  const w = window.open("", "_blank", "width=900,height=680");
+  if (!w) { alert("Popup blocked — allow popups to print."); return; }
+  w.document.write(html); w.document.close(); w.focus();
+}
+
+/* ---- Packing slips: one per order, to stick on each packet ---- */
+function printSlips(list, brand) {
+  const slips = list.map((o) =>
+    "<div class='slip'>" +
+    "<div class='hd'><b>" + brand + "</b><span>" + o.id + "</span></div>" +
+    "<div class='big'>" + (o.name || "") + " &middot; " + (o.phone || "") + "</div>" +
+    "<div class='ad'>" + (o.address || "") + (o.pincode ? " - " + o.pincode : "") + "</div>" +
+    "<div class='row'><span>" + (o.slotDate || "") + " &middot; " + (o.slotLabel || "") + "</span>" +
+    "<span class='pay'>" + (o.pay === "cod" ? "COLLECT " + rup(o.total) + " CASH" : "UPI " + rup(o.total)) + "</span></div>" +
+    "<ul>" + (o.items || []).map((x) => "<li>" + x.qty + "× " + x.name + "</li>").join("") + "</ul>" +
+    (o.rider ? "<div class='s'>Rider: " + o.rider + "</div>" : "") +
+    (o.note ? "<div class='s'>Note: " + o.note + "</div>" : "") +
+    "</div>"
+  ).join("");
+  const html = "<!DOCTYPE html><html><head><title>Packing slips</title><style>" +
+    "@page{size:A4;margin:8mm}body{font-family:Arial,Helvetica,sans-serif;color:#000;margin:0}" +
+    ".slip{border:2px dashed #333;border-radius:6px;padding:10px 12px;margin-bottom:8px;page-break-inside:avoid;height:78mm;box-sizing:border-box}" +
+    ".hd{display:flex;justify-content:space-between;font-size:15px;border-bottom:1px solid #999;padding-bottom:4px;margin-bottom:6px}" +
+    ".big{font-size:16px;font-weight:bold}.ad{font-size:13px;margin:4px 0}" +
+    ".row{display:flex;justify-content:space-between;font-size:12px;margin:6px 0}" +
+    ".pay{font-weight:bold;border:2px solid #000;padding:2px 8px;border-radius:4px}" +
+    "ul{margin:6px 0;padding-left:18px}li{font-size:14px;font-weight:bold;margin:2px 0}" +
+    ".s{font-size:11px;color:#444}" +
+    "</style></head><body>" + slips +
+    "<scr" + "ipt>window.onload=function(){window.print()}</scr" + "ipt></body></html>";
+  const w = window.open("", "_blank", "width=760,height=680");
+  if (!w) { alert("Popup blocked — allow popups to print."); return; }
+  w.document.write(html); w.document.close(); w.focus();
+}
+
 /* ---- Bulk prep sheet: consolidated item counts only ---- */
 function printBulkKOT(list, brand) {
   const agg = {};
@@ -626,6 +694,14 @@ function Orders({ orders, saveOrders }) {
               <button onClick={() => printBulkKOT(chosen, BULK_BRAND)}
                 style={{ background: "#241E1A", color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontWeight: 800, fontSize: 12.5, cursor: "pointer" }}>
                 🖨️ Bulk KOT (items only)
+              </button>
+              <button onClick={() => printDeliverySheet(chosen, BULK_BRAND)}
+                style={{ background: "#1a73e8", color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontWeight: 800, fontSize: 12.5, cursor: "pointer" }}>
+                📋 Delivery sheet (full details)
+              </button>
+              <button onClick={() => printSlips(chosen, BULK_BRAND)}
+                style={{ background: "#8E6A1F", color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontWeight: 800, fontSize: 12.5, cursor: "pointer" }}>
+                🏷️ Packing slips
               </button>
               <select onChange={(e) => { bulkStatus(e.target.value); e.target.value = ""; }} defaultValue=""
                 style={{ ...inp, width: "auto", padding: "7px 10px", fontSize: 12.5, fontWeight: 700 }}>
@@ -994,6 +1070,282 @@ function Visitors({ orders }) {
       <p style={{ fontSize: 11.5, color: "#8a857a", marginTop: 12 }}>
         Counts one visit per device per browsing session. Links shared on WhatsApp usually show as “Direct / WhatsApp”.
       </p>
+    </>
+  );
+}
+
+function downloadCSV(filename, rows) {
+  const esc = (v) => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
+  const csv = rows.map((r) => r.map(esc).join(",")).join("\n");
+  const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = filename; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
+
+function Customers({ orders }) {
+  const [q, setQ] = useState("");
+  const [wait, setWait] = useState(null);
+  const dbUrl = (typeof FIREBASE_RTDB_URL !== "undefined" && FIREBASE_RTDB_URL) ? FIREBASE_RTDB_URL.replace(/\/+$/, "") : null;
+
+  useEffect(() => {
+    (async () => {
+      if (!dbUrl) { setWait([]); return; }
+      const out = [];
+      for (let i = 89; i >= 0; i--) {
+        const d = new Date(); d.setDate(d.getDate() - i);
+        try {
+          const r = await fetch(dbUrl + "/" + VISIT_NS + "/waitlist/" + dkey(d) + ".json");
+          const j = r.ok ? await r.json() : null;
+          if (j) Object.keys(j).forEach((k) => out.push(j[k]));
+        } catch {}
+      }
+      setWait(out.sort((a, b) => b.t - a.t));
+    })();
+  }, []);
+
+  const map = {};
+  orders.filter((o) => o.status !== "Cancelled").forEach((o) => {
+    const k = (o.phone || "").replace(/\D/g, "").slice(-10) || o.name || "unknown";
+    if (!map[k]) map[k] = { phone: k, name: o.name, addr: {}, n: 0, spend: 0, last: o.placedAt, first: o.placedAt, loc: o.loc, pincode: o.pincode, items: {} };
+    const c = map[k];
+    c.n++; c.spend += o.total || 0;
+    if (o.address) c.addr[o.address + (o.pincode ? ", " + o.pincode : "")] = 1;
+    (o.items || []).forEach((i) => { c.items[i.name] = (c.items[i.name] || 0) + i.qty; });
+    if ((o.placedAt || "") > (c.last || "")) { c.last = o.placedAt; c.name = o.name; c.loc = o.loc || c.loc; c.pincode = o.pincode || c.pincode; }
+    if ((o.placedAt || "") < (c.first || "")) c.first = o.placedAt;
+  });
+  const all = Object.keys(map).map((k) => map[k]).sort((a, b) => b.spend - a.spend);
+  const s = q.trim().toLowerCase();
+  const list = s ? all.filter((c) => (c.name || "").toLowerCase().includes(s) || c.phone.includes(s) || Object.keys(c.addr).join(" ").toLowerCase().includes(s)) : all;
+  const repeat = all.filter((c) => c.n > 1).length;
+  const revenue = all.reduce((x, c) => x + c.spend, 0);
+
+  const exportCustomers = () => downloadCSV("customers-" + dkey(new Date()) + ".csv",
+    [["Name", "Phone", "Orders", "Total spent", "Address", "Pincode", "GPS", "First order", "Last order", "Favourite item"]].concat(
+      all.map((c) => {
+        const fav = Object.keys(c.items).sort((a, b) => c.items[b] - c.items[a])[0] || "";
+        return [c.name, c.phone, c.n, c.spend, Object.keys(c.addr).join(" | "), c.pincode || "",
+          c.loc ? c.loc.lat + "," + c.loc.lng : "", (c.first || "").slice(0, 10), (c.last || "").slice(0, 10), fav];
+      })));
+  const exportOrders = () => downloadCSV("orders-" + dkey(new Date()) + ".csv",
+    [["Order ID", "Date", "Slot", "Name", "Phone", "Address", "Pincode", "GPS", "Items", "Amount", "Payment", "Status", "Rider"]].concat(
+      orders.map((o) => [o.id, (o.placedAt || "").slice(0, 10), o.slotDate + " " + (o.slotLabel || ""), o.name, o.phone,
+        o.address, o.pincode, o.loc ? o.loc.lat + "," + o.loc.lng : "",
+        (o.items || []).map((i) => i.qty + "x " + i.name).join(" | "), o.total, o.pay, o.status, o.rider || ""])));
+  const exportWait = () => downloadCSV("waitlist-" + dkey(new Date()) + ".csv",
+    [["Date", "Phone", "Name", "Pincode", "GPS", "Area"]].concat(
+      (wait || []).map((w) => [new Date(w.t).toLocaleDateString("en-IN"), w.phone, w.name || "", w.pincode || "",
+        w.la ? w.la + "," + w.ln : "", w.area || ""])));
+
+  return (
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12, marginBottom: 14 }}>
+        <Stat l="Total customers" v={all.length} sub="who ordered" />
+        <Stat l="Repeat customers" v={repeat} sub={all.length ? Math.round((repeat / all.length) * 100) + "% came back" : "—"} />
+        <Stat l="Lifetime revenue" v={rup(revenue)} sub="all customers" />
+        <Stat l="Waitlist leads" v={wait ? wait.length : "…"} sub="outside your zones" hot={!!(wait && wait.length)} />
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, phone or address…" style={{ ...inp, flex: 1, minWidth: 190 }} />
+        <button onClick={exportCustomers} style={{ background: BRAND.ok, color: "#fff", border: "none", borderRadius: 9, padding: "9px 14px", fontWeight: 800, fontSize: 12.5, cursor: "pointer" }}>⬇ Customers CSV</button>
+        <button onClick={exportOrders} style={{ background: "#241E1A", color: "#fff", border: "none", borderRadius: 9, padding: "9px 14px", fontWeight: 800, fontSize: 12.5, cursor: "pointer" }}>⬇ All orders CSV</button>
+        {wait && wait.length > 0 && <button onClick={exportWait} style={{ background: BRAND.red, color: "#fff", border: "none", borderRadius: 9, padding: "9px 14px", fontWeight: 800, fontSize: 12.5, cursor: "pointer" }}>⬇ Waitlist CSV</button>}
+      </div>
+
+      <div style={{ display: "grid", gap: 9 }}>
+        {list.length === 0 && <div style={{ color: "#8a857a", padding: 24, textAlign: "center" }}>No customers yet.</div>}
+        {list.map((c) => {
+          const fav = Object.keys(c.items).sort((a, b) => c.items[b] - c.items[a])[0];
+          return (
+            <div key={c.phone} style={{ background: "#fff", borderRadius: 12, padding: 13 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                <div style={{ minWidth: 170 }}>
+                  <b style={{ fontSize: 15 }}>{c.name || "—"}</b>
+                  {c.n > 1 && <span style={{ background: "#EAF6EE", color: BRAND.ok, borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 800, marginLeft: 8 }}>REPEAT ×{c.n}</span>}
+                  <div style={{ fontSize: 12.5, color: "#5c584e" }}>📞 {c.phone}</div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontWeight: 800, fontSize: 16 }}>{rup(c.spend)}</div>
+                  <div style={{ fontSize: 11.5, color: "#8a857a" }}>{c.n} order(s) · last {(c.last || "").slice(0, 10)}</div>
+                </div>
+              </div>
+              <div style={{ fontSize: 12.5, color: "#5c584e", margin: "6px 0" }}>📍 {Object.keys(c.addr).join(" • ") || "—"}</div>
+              {fav && <div style={{ fontSize: 12, color: "#8a857a" }}>⭐ Usually orders: {fav}</div>}
+              <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                <a href={"tel:+91" + c.phone} style={{ background: "#241E1A", color: "#fff", borderRadius: 8, padding: "7px 13px", fontSize: 12, fontWeight: 700, textDecoration: "none" }}>📞 Call</a>
+                <a href={"https://wa.me/91" + c.phone} target="_blank" rel="noreferrer" style={{ background: "#1FA855", color: "#fff", borderRadius: 8, padding: "7px 13px", fontSize: 12, fontWeight: 700, textDecoration: "none" }}>💬 WhatsApp</a>
+                {c.loc && <a href={"https://www.google.com/maps?q=" + c.loc.lat + "," + c.loc.lng} target="_blank" rel="noreferrer" style={{ background: "#1a73e8", color: "#fff", borderRadius: 8, padding: "7px 13px", fontSize: 12, fontWeight: 700, textDecoration: "none" }}>📍 Map</a>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {wait && wait.length > 0 && (
+        <>
+          <h3 className="display" style={{ fontWeight: 800, fontSize: 17, margin: "22px 0 4px" }}>Waitlist — outside your delivery area</h3>
+          <p style={{ fontSize: 12.5, color: "#6b675e", margin: "0 0 10px" }}>These people asked to be notified when you expand. Message them the day you add their zone.</p>
+          <div style={{ display: "grid", gap: 7 }}>
+            {wait.slice(0, 40).map((w, i) => (
+              <div key={i} style={{ background: "#fff", borderRadius: 10, padding: "9px 13px", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 12.5 }}>
+                <b>{w.name || "—"}</b>
+                <span>📞 {w.phone}</span>
+                {w.pincode ? <span style={{ color: "#8a857a" }}>· {w.pincode}</span> : null}
+                <span style={{ color: "#8a857a", marginLeft: "auto" }}>{new Date(w.t).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</span>
+                <a href={"https://wa.me/91" + w.phone} target="_blank" rel="noreferrer" style={{ background: "#1FA855", color: "#fff", borderRadius: 7, padding: "5px 11px", fontWeight: 700, textDecoration: "none" }}>WhatsApp</a>
+                {w.la && <a href={"https://www.google.com/maps?q=" + w.la + "," + w.ln} target="_blank" rel="noreferrer" style={{ color: "#1a73e8", fontWeight: 700 }}>Map</a>}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+function Demand({ zones }) {
+  const [pins, setPins] = useState(null);
+  const [days, setDays] = useState(30);
+  const [only, setOnly] = useState("out");
+  const [busy, setBusy] = useState(false);
+  const boxRef = useRef(null), mapRef = useRef(null), layerRef = useRef([]);
+  const [ready, setReady] = useState(false);
+  const dbUrl = (typeof FIREBASE_RTDB_URL !== "undefined" && FIREBASE_RTDB_URL) ? FIREBASE_RTDB_URL.replace(/\/+$/, "") : null;
+
+  const load = async () => {
+    if (!dbUrl) { setPins("nodb"); return; }
+    setBusy(true);
+    const out = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(); d.setDate(d.getDate() - i);
+      const key = dkey(d);
+      try {
+        const r = await fetch(dbUrl + "/" + VISIT_NS + "/pins/" + key + ".json");
+        const j = r.ok ? await r.json() : null;
+        if (j) Object.keys(j).forEach((k) => { const p = j[k]; if (p && p.la) out.push(p); });
+      } catch {}
+    }
+    out.sort((a, b) => b.t - a.t);
+    setPins(out); setBusy(false);
+  };
+  useEffect(() => { load(); }, [days]);
+
+  useEffect(() => {
+    let alive = true;
+    ensureLeaflet().then((L) => {
+      if (!alive || !boxRef.current || mapRef.current) return;
+      const map = L.map(boxRef.current).setView([12.9, 80.08], 11);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+      mapRef.current = map; setReady(true);
+      setTimeout(() => map.invalidateSize(), 250);
+    }).catch(() => {});
+    return () => { alive = false; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; } };
+  }, []);
+
+  const shown = Array.isArray(pins) ? pins.filter((p) => (only === "out" ? !p.in : only === "in" ? p.in : true)) : [];
+
+  useEffect(() => {
+    if (!ready || !mapRef.current || !window.L || !Array.isArray(pins)) return;
+    const L = window.L, map = mapRef.current;
+    layerRef.current.forEach((l) => map.removeLayer(l));
+    layerRef.current = [];
+    (zones || []).filter((z) => z.active !== false).forEach((z) => {
+      const style = { color: "#177245", weight: 2, fillColor: "#2E8B57", fillOpacity: .07 };
+      const layer = (z.shape === "poly" && z.points && z.points.length >= 3)
+        ? L.polygon(z.points.map((p) => [p.lat, p.lng]), style)
+        : (z.lat ? L.circle([z.lat, z.lng], { ...style, radius: (z.radiusKm || 1) * 1000 }) : null);
+      if (layer) { layer.addTo(map); layerRef.current.push(layer); }
+    });
+    shown.forEach((p) => {
+      const c = L.circleMarker([p.la, p.ln], {
+        radius: p.b ? 8 : 6, color: p.in ? "#177245" : "#C0392B", weight: 2,
+        fillColor: p.in ? "#2E8B57" : "#E74C3C", fillOpacity: p.b ? .9 : .55,
+      }).addTo(map).bindPopup(
+        (p.in ? "✅ Inside zone" : "❌ Outside — " + (p.d != null ? p.d + " km away" : "")) +
+        (p.b ? "<br><b>Tried to order (blocked)</b>" : "") +
+        (p.pc ? "<br>Pincode: " + p.pc : "") +
+        "<br>" + new Date(p.t).toLocaleString("en-IN") +
+        '<br><a href="https://www.google.com/maps?q=' + p.la + "," + p.ln + '" target="_blank">Open in Google Maps</a>'
+      );
+      layerRef.current.push(c);
+    });
+    if (shown.length) {
+      try { map.fitBounds(L.latLngBounds(shown.map((p) => [p.la, p.ln])), { padding: [30, 30], maxZoom: 14 }); } catch {}
+    }
+  }, [pins, only, ready, zones]);
+
+  if (pins === "nodb") return <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 10, padding: 14, fontSize: 13.5 }}>Needs the database connected.</div>;
+
+  const outs = Array.isArray(pins) ? pins.filter((p) => !p.in) : [];
+  const blocked = outs.filter((p) => p.b);
+  // group nearby rejected pins (~1.1 km grid) to reveal demand clusters
+  const grid = {};
+  outs.forEach((p) => {
+    const k = Math.round(p.la * 100) / 100 + "," + Math.round(p.ln * 100) / 100;
+    (grid[k] = grid[k] || []).push(p);
+  });
+  const clusters = Object.keys(grid).map((k) => ({ k, list: grid[k] })).sort((a, b) => b.list.length - a.list.length).slice(0, 8);
+
+  return (
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12, marginBottom: 14 }}>
+        <Stat l="Outside-zone pins" v={outs.length} sub={"last " + days + " days"} hot={outs.length > 0} />
+        <Stat l="Tried to order" v={blocked.length} sub="blocked by geofence" hot={blocked.length > 0} />
+        <Stat l="Inside-zone pins" v={Array.isArray(pins) ? pins.length - outs.length : 0} sub="served area" />
+        <Stat l="Demand clusters" v={clusters.length} sub="areas worth adding" />
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
+        {[["out", "❌ Outside only"], ["in", "✅ Inside only"], ["all", "All pins"]].map(([v, l]) => (
+          <button key={v} onClick={() => setOnly(v)} style={{ background: only === v ? BRAND.red : "#fff", color: only === v ? "#fff" : BRAND.ink, border: "1px solid #e5dfd0", borderRadius: 999, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>{l}</button>
+        ))}
+        <select value={days} onChange={(e) => setDays(Number(e.target.value))} style={{ ...inp, width: "auto", padding: "6px 10px", fontSize: 12.5, fontWeight: 700 }}>
+          <option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option>
+        </select>
+        <button onClick={load} style={{ marginLeft: "auto", background: "#fff", border: "1.5px solid " + BRAND.red, color: BRAND.red, borderRadius: 8, padding: "6px 14px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>{busy ? "…" : "↻ Refresh"}</button>
+      </div>
+
+      <div ref={boxRef} style={{ height: 330, borderRadius: 12, overflow: "hidden", border: "1px solid #E5DFD0", background: "#EFEAE0" }} />
+      <p style={{ fontSize: 11.5, color: "#8a857a", margin: "8px 0 0" }}>Red = outside your zones (bigger dot = they actually tried to order). Green = inside. Tap any dot for details.</p>
+
+      <h3 className="display" style={{ fontWeight: 800, fontSize: 17, margin: "20px 0 8px" }}>Best areas to expand into</h3>
+      <div style={{ display: "grid", gap: 8 }}>
+        {clusters.length === 0 && <div style={{ color: "#8a857a", fontSize: 13 }}>No rejected locations recorded yet.</div>}
+        {clusters.map((c) => {
+          const p = c.list[0];
+          const tried = c.list.filter((x) => x.b).length;
+          const pc = {}; c.list.forEach((x) => { if (x.pc) pc[x.pc] = (pc[x.pc] || 0) + 1; });
+          const topPc = Object.keys(pc).sort((a, b) => pc[b] - pc[a])[0];
+          return (
+            <div key={c.k} style={{ background: "#fff", borderRadius: 10, padding: "11px 14px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 180 }}>
+                <b style={{ fontSize: 14 }}>{c.list.length} request{c.list.length > 1 ? "s" : ""}{topPc ? " · pincode " + topPc : ""}</b>
+                <div style={{ fontSize: 12, color: "#8a857a" }}>
+                  {tried ? tried + " tried to order · " : ""}nearest zone {p.z || "—"} · about {p.d} km away
+                </div>
+              </div>
+              <a href={"https://www.google.com/maps?q=" + p.la + "," + p.ln} target="_blank" rel="noreferrer"
+                style={{ background: "#1a73e8", color: "#fff", borderRadius: 8, padding: "7px 13px", fontSize: 12, fontWeight: 700, textDecoration: "none" }}>📍 View area</a>
+            </div>
+          );
+        })}
+      </div>
+
+      <h3 className="display" style={{ fontWeight: 800, fontSize: 17, margin: "20px 0 8px" }}>Recent pins</h3>
+      <div style={{ display: "grid", gap: 6 }}>
+        {shown.slice(0, 25).map((p, i) => (
+          <div key={i} style={{ background: "#fff", borderRadius: 9, padding: "8px 12px", display: "flex", gap: 10, alignItems: "center", fontSize: 12.5, flexWrap: "wrap" }}>
+            <span>{p.in ? "✅" : "❌"}</span>
+            <span style={{ fontWeight: 700 }}>{p.la}, {p.ln}</span>
+            {p.pc ? <span style={{ color: "#8a857a" }}>· {p.pc}</span> : null}
+            {p.b ? <span style={{ background: "#FBE9E7", color: BRAND.danger, borderRadius: 6, padding: "2px 8px", fontWeight: 800, fontSize: 11 }}>tried to order</span> : null}
+            <span style={{ color: "#8a857a", marginLeft: "auto" }}>{new Date(p.t).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</span>
+            <a href={"https://www.google.com/maps?q=" + p.la + "," + p.ln} target="_blank" rel="noreferrer" style={{ color: "#1a73e8", fontWeight: 700 }}>Map</a>
+          </div>
+        ))}
+      </div>
     </>
   );
 }
