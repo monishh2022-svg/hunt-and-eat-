@@ -299,7 +299,35 @@ async function saveKey(key, val) {
 }
 
 /* ================================ APP ================================ */
-/* ---- anonymous visit counter (feeds the admin Visitors tab) ---- */
+/* ---- anonymous funnel tracking (feeds the admin Visitors tab) ---- */
+const TRACK_NS = "huntandeat";
+function visitorId() {
+  try {
+    let v = localStorage.getItem("v-id");
+    if (!v) { v = "v" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); localStorage.setItem("v-id", v); }
+    return v;
+  } catch { return "anon"; }
+}
+function trackBase() {
+  try { return (typeof FIREBASE_RTDB_URL !== "undefined" && FIREBASE_RTDB_URL) ? FIREBASE_RTDB_URL.replace(/\/+$/, "") : null; } catch { return null; }
+}
+function todayKey() {
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+// records the furthest point each visitor reaches — once per step, per session
+function trackStep(step) {
+  try {
+    const base = trackBase(); if (!base) return;
+    const done = JSON.parse(sessionStorage.getItem("v-steps") || "{}");
+    if (done[step]) return;
+    done[step] = 1;
+    sessionStorage.setItem("v-steps", JSON.stringify(done));
+    fetch(base + "/" + TRACK_NS + "/events/" + todayKey() + ".json", {
+      method: "POST", body: JSON.stringify({ t: Date.now(), v: visitorId(), s: step }),
+    }).catch(function () {});
+  } catch {}
+}
 async function trackVisit(ns) {
   try {
     const base = (typeof FIREBASE_RTDB_URL !== "undefined" && FIREBASE_RTDB_URL) ? FIREBASE_RTDB_URL.replace(/\/+$/, "") : null;
@@ -327,7 +355,7 @@ function App() {
   const [orders, setOrders] = useState([]);
   const [loaded, setLoaded] = useState(false);
 
-  useEffect(() => { trackVisit("huntandeat"); }, []);
+  useEffect(() => { trackVisit(TRACK_NS); trackStep("visit"); }, []);
 
   useEffect(() => {
     (async () => {
@@ -457,12 +485,12 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
   const total = subtotal + delFee;
   const count = cartItems.reduce((s, x) => s + x.qty, 0);
 
-  const add = (id, d) => setCart((c) => {
+  const add = (id, d) => { if (d > 0) trackStep("add_to_cart"); return setCart((c) => {
     const q = Math.max(0, (c[id] || 0) + d);
     const n = { ...c, [id]: q };
     if (q === 0) delete n[id];
     return n;
-  });
+  }); };
 
   return (
     <div>
@@ -493,7 +521,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
               <span style={{ fontSize: 12.5, color: "#F3DCC0", fontWeight: 700, whiteSpace: "nowrap" }}>Hi, {profile.name.split(" ")[0]}</span>
             )}
             <button className="hdr-btn" onClick={() => setTrackOpen(true)} style={{ background: "transparent", border: "1.5px solid rgba(233,200,155,.55)", color: "#F3DCC0", borderRadius: 999, padding: "10px 18px", cursor: "pointer", fontSize: 13, fontWeight: 700, letterSpacing: 0.3 }}>My orders{myOrders.length ? " · " + myOrders.length : ""}</button>
-            <button className="hdr-btn" onClick={() => setCartOpen(true)} style={{ background: "linear-gradient(180deg, #F2CE8F, #E2AE5C)", border: "none", color: "#5E0F18", borderRadius: 999, padding: "10px 20px", cursor: "pointer", fontWeight: 800, fontSize: 14, boxShadow: "0 3px 10px rgba(0,0,0,.28)" }}>
+            <button className="hdr-btn" onClick={() => { trackStep("view_cart"); setCartOpen(true); }} style={{ background: "linear-gradient(180deg, #F2CE8F, #E2AE5C)", border: "none", color: "#5E0F18", borderRadius: 999, padding: "10px 20px", cursor: "pointer", fontWeight: 800, fontSize: 14, boxShadow: "0 3px 10px rgba(0,0,0,.28)" }}>
               🧺 Cart{count > 0 ? ` · ${count}` : ""}
             </button>
           </div>
@@ -637,7 +665,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
                   <Row l={<b>To pay</b>} r={<b>{rup(total)}</b>} />
                 </div>
               </div>
-              <button onClick={() => { setCartOpen(false); setCheckout(true); }}
+              <button onClick={() => { trackStep("checkout"); setCartOpen(false); setCheckout(true); }}
                 style={{ width: "100%", marginTop: 16, background: BRAND.green, color: "#fff", border: "none", borderRadius: 12, padding: "14px", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>
                 Choose delivery slot →
               </button>
@@ -1027,6 +1055,7 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
       slotDate: day, slotId, slotLabel: slot.label,
       status: "Order received", placedAt: new Date().toISOString(),
     });
+    trackStep("order_placed");
     try {
       localStorage.setItem("he-cust", ph);
       localStorage.setItem("he-profile", JSON.stringify({
@@ -1056,7 +1085,7 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
           const st = slotState(s);
           const sel = slotId === s.id;
           return (
-            <button key={s.id} disabled={!st.ok} onClick={() => setSlotId(s.id)}
+            <button key={s.id} disabled={!st.ok} onClick={() => { trackStep("slot_picked"); setSlotId(s.id); }}
               style={{ display: "flex", justifyContent: "space-between", alignItems: "center", border: "2px solid " + (sel ? BRAND.green : "#e5dfd0"), background: sel ? "#FCEFEA" : st.ok ? "#fff" : "#f3f0e8", borderRadius: 10, padding: "10px 14px", cursor: st.ok ? "pointer" : "not-allowed", fontSize: 14, fontWeight: 600, color: st.ok ? BRAND.ink : "#a39e93" }}>
               <span>🕐 {s.label}</span>
               <span style={{ fontSize: 12, fontWeight: 600 }}>{st.ok ? (st.left <= 5 ? `${st.left} left` : "Available") : st.why}</span>
