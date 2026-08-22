@@ -174,6 +174,7 @@ function audioCtx() {
   } catch {}
   return __ac;
 }
+const BULK_BRAND = "HUNT & EAT";
 const VISIT_NS = "huntandeat";
 const TONES = {
   bell:  { label: "🔔 Doorbell", notes: [[880, 0, .22], [659, .2, .55]] },
@@ -362,7 +363,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v3.3</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v3.4</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -550,10 +551,62 @@ function RiderAssign({ o, onSave }) {
 }
 
 /* ---------------- Orders ---------------- */
+/* ---- Bulk prep sheet: consolidated item counts only ---- */
+function printBulkKOT(list, brand) {
+  const agg = {};
+  list.forEach((o) => o.items.forEach((i) => {
+    const key = i.name + ((i.addons && i.addons.length) ? " (+" + i.addons.join(", ") + ")" : "");
+    agg[key] = (agg[key] || 0) + i.qty;
+  }));
+  const names = Object.keys(agg).sort();
+  const totalUnits = names.reduce((s, n) => s + agg[n], 0);
+  const rows = names.map((n) => '<tr><td class="q">' + agg[n] + '</td><td class="n">' + n + "</td></tr>").join("");
+  const slots = {};
+  list.forEach((o) => { const k = (o.slotDate || "") + " " + (o.slotLabel || ""); slots[k] = (slots[k] || 0) + 1; });
+  const slotLine = Object.keys(slots).map((k) => k + " (" + slots[k] + ")").join(" · ");
+  const html = '<!DOCTYPE html><html><head><title>Prep sheet</title><style>' +
+    "body{font-family:'Courier New',monospace;max-width:420px;margin:0 auto;padding:12px;color:#000}" +
+    "h2{text-align:center;margin:4px 0;letter-spacing:1px}.c{text-align:center}.s{font-size:12px}" +
+    "hr{border:none;border-top:2px dashed #000;margin:8px 0}" +
+    "table{width:100%;border-collapse:collapse}td{padding:7px 2px;border-bottom:1px dotted #bbb;vertical-align:top}" +
+    ".q{width:56px;font-size:22px;font-weight:bold;text-align:right;padding-right:12px}" +
+    ".n{font-size:15px;font-weight:bold}.tot{font-size:14px;font-weight:bold}" +
+    '</style></head><body>' +
+    "<h2>" + brand + "</h2>" +
+    '<div class="c s"><b>KITCHEN PREP SHEET</b></div>' +
+    '<div class="c s">' + new Date().toLocaleString("en-IN") + "</div>" +
+    '<div class="c s">' + list.length + " order(s)" + (slotLine ? " · " + slotLine : "") + "</div>" +
+    "<hr/><table>" + rows + "</table><hr/>" +
+    '<div class="tot">TOTAL ITEMS: ' + totalUnits + "</div>" +
+    '<div class="s">Orders: ' + list.map((o) => o.id).join(", ") + "</div>" +
+    "<scr" + "ipt>window.onload=function(){window.print()}</scr" + "ipt></body></html>";
+  const w = window.open("", "_blank", "width=420,height=680");
+  if (!w) { alert("Popup blocked — allow popups to print the prep sheet."); return; }
+  w.document.write(html); w.document.close(); w.focus();
+}
+
 function Orders({ orders, saveOrders }) {
   const [filter, setFilter] = useState("pending");
+  const [sel, setSel] = useState({});
   const list = orders.filter((o) => filter === "all" ? true : filter === "pending" ? (o.status !== "Delivered" && o.status !== "Cancelled") : o.status === filter);
   const setStatus = (id, status) => saveOrders(orders.map((o) => (o.id === id ? { ...o, status } : o)));
+  const chosen = list.filter((o) => sel[o.id]);
+  const allOn = list.length > 0 && list.every((o) => sel[o.id]);
+  const toggle = (id) => setSel((s) => { const n = { ...s }; if (n[id]) delete n[id]; else n[id] = 1; return n; });
+  const bulkStatus = (status) => {
+    if (!status || !chosen.length) return;
+    if (!window.confirm("Move " + chosen.length + " order(s) to \"" + status + "\"?")) return;
+    const ids = {}; chosen.forEach((o) => { ids[o.id] = 1; });
+    saveOrders(orders.map((o) => (ids[o.id] ? { ...o, status } : o)));
+    setSel({});
+  };
+  const bulkRider = () => {
+    const r = prompt("Assign these " + chosen.length + " order(s) to which delivery boy?\n(name or 10-digit phone number)");
+    if (!r) return;
+    const ids = {}; chosen.forEach((o) => { ids[o.id] = 1; });
+    saveOrders(orders.map((o) => (ids[o.id] ? { ...o, rider: r.trim() } : o)));
+    setSel({});
+  };
   return (
     <>
       <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
@@ -561,12 +614,39 @@ function Orders({ orders, saveOrders }) {
           <button key={f} onClick={() => setFilter(f)} style={{ background: filter === f ? BRAND.red : "#fff", color: filter === f ? "#fff" : BRAND.ink, border: "1px solid #e5dfd0", borderRadius: 999, padding: "5px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{f}</button>
         ))}
       </div>
+      {list.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: chosen.length ? "#FDF0EE" : "#fff", border: "1.5px solid " + (chosen.length ? BRAND.red : "#EDE7DA"), borderRadius: 10, padding: "10px 14px", marginBottom: 12, position: "sticky", top: 0, zIndex: 5 }}>
+          <label style={{ display: "flex", gap: 7, alignItems: "center", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+            <input type="checkbox" checked={allOn} onChange={() => setSel(allOn ? {} : list.reduce((a, o) => { a[o.id] = 1; return a; }, {}))} />
+            Select all ({list.length})
+          </label>
+          {chosen.length > 0 ? (
+            <>
+              <b style={{ fontSize: 13, color: BRAND.red }}>{chosen.length} selected</b>
+              <button onClick={() => printBulkKOT(chosen, BULK_BRAND)}
+                style={{ background: "#241E1A", color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontWeight: 800, fontSize: 12.5, cursor: "pointer" }}>
+                🖨️ Bulk KOT (items only)
+              </button>
+              <select onChange={(e) => { bulkStatus(e.target.value); e.target.value = ""; }} defaultValue=""
+                style={{ ...inp, width: "auto", padding: "7px 10px", fontSize: 12.5, fontWeight: 700 }}>
+                <option value="">Move all to…</option>
+                {[...STATUSES, "Cancelled"].map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <button onClick={bulkRider} style={{ background: BRAND.red, color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontWeight: 800, fontSize: 12.5, cursor: "pointer" }}>🛵 Assign rider</button>
+              <button onClick={() => setSel({})} style={{ marginLeft: "auto", background: "#f0ece1", border: "none", borderRadius: 8, padding: "8px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Clear</button>
+            </>
+          ) : (
+            <span style={{ fontSize: 12.5, color: "#8a857a" }}>Tick orders to print one prep sheet, change status, or assign a rider in bulk.</span>
+          )}
+        </div>
+      )}
       {list.length === 0 && <div style={{ textAlign: "center", color: "#8a857a", padding: 30 }}>No orders here. New orders from the store appear automatically within ~10 seconds.</div>}
       <div style={{ display: "grid", gap: 10 }}>
         {list.map((o) => (
-          <div key={o.id} style={{ background: "#fff", borderRadius: 12, padding: 14 }}>
+          <div key={o.id} style={{ background: "#fff", borderRadius: 12, padding: 14, border: sel[o.id] ? "2px solid " + BRAND.red : "2px solid transparent" }}>
             <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
-              <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                <input type="checkbox" checked={!!sel[o.id]} onChange={() => toggle(o.id)} style={{ width: 17, height: 17, cursor: "pointer" }} />
                 <span className="display" style={{ fontWeight: 800 }}>{o.id}</span>
                 <span style={{ fontSize: 12, color: "#8a857a", marginLeft: 8 }}>{o.slotDate} · {o.slotLabel}</span>
               </div>
