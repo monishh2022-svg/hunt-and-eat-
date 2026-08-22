@@ -362,7 +362,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v3.2</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v3.3</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -772,8 +772,19 @@ function ZoneEditor({ zones, onSave, close }) {
   );
 }
 
+const FUNNEL = [
+  ["visit", "Opened the website", "👀"],
+  ["add_to_cart", "Added an item to basket", "🛒"],
+  ["view_cart", "Opened the basket", "🧺"],
+  ["checkout", "Started checkout", "📝"],
+  ["slot_picked", "Chose a delivery slot", "🕐"],
+  ["location_set", "Pinned their location", "📍"],
+  ["order_placed", "Placed the order", "✅"],
+];
+
 function Visitors({ orders }) {
   const [data, setData] = useState(null);
+  const [funnel, setFunnel] = useState(null);
   const [busy, setBusy] = useState(false);
   const dbUrl = (typeof FIREBASE_RTDB_URL !== "undefined" && FIREBASE_RTDB_URL) ? FIREBASE_RTDB_URL.replace(/\/+$/, "") : null;
 
@@ -792,6 +803,17 @@ function Visitors({ orders }) {
         out.push({ date: d, visits: rows.length, uniq: Object.keys(seen).length, refs: rows.map((x) => (x && x.r) || "direct") });
       } catch { out.push({ date: d, visits: 0, uniq: 0, refs: [] }); }
     }
+    // funnel: unique visitors who reached each step
+    const steps = {};
+    FUNNEL.forEach(([k]) => { steps[k] = {}; });
+    for (const d of days) {
+      try {
+        const r = await fetch(dbUrl + "/" + VISIT_NS + "/events/" + d + ".json");
+        const j = r.ok ? await r.json() : null;
+        if (j) Object.keys(j).forEach((k) => { const e = j[k]; if (e && e.s && steps[e.s]) steps[e.s][e.v] = 1; });
+      } catch {}
+    }
+    setFunnel(FUNNEL.map(([k, label, icon]) => ({ k, label, icon, n: Object.keys(steps[k]).length })));
     setData(out); setBusy(false);
   };
   useEffect(() => { load(); }, []);
@@ -838,6 +860,47 @@ function Visitors({ orders }) {
           </div>
         ))}
       </div>
+
+      <h3 className="display" style={{ fontWeight: 800, fontSize: 17, margin: "22px 0 4px" }}>Where visitors drop off</h3>
+      <p style={{ fontSize: 12.5, color: "#6b675e", margin: "0 0 10px" }}>Last 7 days — how far each visitor got before leaving. The red line is your biggest leak.</p>
+      {funnel && (() => {
+        const top = funnel[0].n || 1;
+        let worst = { i: -1, lost: 0 };
+        funnel.forEach((s, i) => {
+          if (i === 0) return;
+          const lost = funnel[i - 1].n - s.n;
+          if (lost > worst.lost) worst = { i, lost };
+        });
+        return (
+          <div style={{ display: "grid", gap: 6 }}>
+            {funnel.map((s, i) => {
+              const pct = Math.round((s.n / top) * 100);
+              const prev = i ? funnel[i - 1].n : null;
+              const lost = prev == null ? 0 : prev - s.n;
+              const lostPct = prev ? Math.round((lost / prev) * 100) : 0;
+              const isWorst = i === worst.i && worst.lost > 0;
+              return (
+                <div key={s.k}>
+                  {i > 0 && lost > 0 && (
+                    <div style={{ fontSize: 11.5, fontWeight: 700, color: isWorst ? BRAND.danger : "#a39e93", padding: "2px 0 2px 6px" }}>
+                      ↓ {lost} left here ({lostPct}%){isWorst ? "  ← biggest drop-off" : ""}
+                    </div>
+                  )}
+                  <div style={{ background: "#fff", borderRadius: 10, padding: "10px 14px", border: isWorst ? "1.5px solid " + BRAND.danger : "1px solid #EDE7DA" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                      <span style={{ fontSize: 13.5, fontWeight: 700 }}>{s.icon} {s.label}</span>
+                      <span style={{ fontSize: 13.5, fontWeight: 800 }}>{s.n} <span style={{ fontSize: 11.5, color: "#8a857a", fontWeight: 600 }}>({pct}%)</span></span>
+                    </div>
+                    <div style={{ background: "#F1ECE1", borderRadius: 999, height: 9, overflow: "hidden" }}>
+                      <div style={{ width: Math.max(2, pct) + "%", height: "100%", background: s.k === "order_placed" ? BRAND.ok : BRAND.red, borderRadius: 999 }} />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       <h3 className="display" style={{ fontWeight: 800, fontSize: 17, margin: "20px 0 8px" }}>Where visitors came from</h3>
       <div style={{ display: "grid", gap: 6 }}>
