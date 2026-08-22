@@ -299,6 +299,25 @@ async function saveKey(key, val) {
 }
 
 /* ================================ APP ================================ */
+/* ---- anonymous visit counter (feeds the admin Visitors tab) ---- */
+async function trackVisit(ns) {
+  try {
+    const base = (typeof FIREBASE_RTDB_URL !== "undefined" && FIREBASE_RTDB_URL) ? FIREBASE_RTDB_URL.replace(/\/+$/, "") : null;
+    if (!base) return;
+    if (sessionStorage.getItem("v-tracked")) return;   // one visit per browsing session
+    sessionStorage.setItem("v-tracked", "1");
+    let vid = localStorage.getItem("v-id");
+    const isNew = !vid;
+    if (!vid) { vid = "v" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); localStorage.setItem("v-id", vid); }
+    const d = new Date();
+    const key = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+    fetch(base + "/" + ns + "/visits/" + key + ".json", {
+      method: "POST",
+      body: JSON.stringify({ t: Date.now(), v: vid, n: isNew ? 1 : 0, r: (document.referrer || "direct").slice(0, 90) }),
+    }).catch(function () {});
+  } catch {}
+}
+
 function App() {
   const [products, setProducts] = useState(DEFAULT_PRODUCTS);
   const [categories, setCategories] = useState(CATEGORIES.slice(1));
@@ -307,6 +326,8 @@ function App() {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [orders, setOrders] = useState([]);
   const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => { trackVisit("huntandeat"); }, []);
 
   useEffect(() => {
     (async () => {
