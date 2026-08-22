@@ -99,14 +99,46 @@ FIREBASE_RTDB_URL ? {
 </head>
 <body>
 <div id="root">
-<div id="he-loader" style="min-height:100vh;display:grid;place-items:center;background:#FDFAF4;font-family:Georgia,serif">
-  <div style="text-align:center">
-    <img src="data:image/png;base64,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" width="84" height="84" style="object-fit:contain;border-radius:14px" alt="Hunt & Eat"/>
-    <div style="font-size:22px;font-weight:800;color:#A6212E">Hunt &amp; Eat</div>
-    <div style="font-size:10px;letter-spacing:3px;color:#241E1A;margin:4px 0 10px">THE FRESH AND ORIGINAL</div>
-    <div style="font-size:13px;color:#8a857a">Loading fresh stock&hellip; please wait a few seconds</div>
+<div id="he-loader" style="position:fixed;inset:0;display:grid;place-items:center;background:radial-gradient(900px 500px at 50% 35%,#FFFDF6,#F6EADB);z-index:9999;font-family:'Fraunces',Georgia,serif">
+  <div style="text-align:center;padding:20px">
+    <div class="he-logowrap">
+      <div class="he-ring"></div>
+      <img src="data:image/png;base64,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" width="104" height="104" alt="Hunt &amp; Eat" style="object-fit:contain;border-radius:20px;position:relative;z-index:2;background:#FFFDF6;padding:6px;box-shadow:0 6px 22px rgba(120,20,30,.14)"/>
+    </div>
+    <div style="font-size:27px;font-weight:800;color:#A6212E;margin-top:16px;letter-spacing:-.01em">Hunt &amp; Eat</div>
+    <div style="font-size:9.5px;letter-spacing:3.4px;color:#8E6A1F;font-weight:700;margin-top:5px;font-family:'Inter',sans-serif">THE FRESH AND ORIGINAL</div>
+    <div class="he-bar"><span></span></div>
+    <div id="he-msg" style="font-size:12.5px;color:#8a857a;font-family:'Inter',sans-serif;letter-spacing:.2px">Firing up the farm&hellip;</div>
   </div>
 </div>
+<style>
+  .he-logowrap{position:relative;display:inline-grid;place-items:center;width:150px;height:150px}
+  .he-ring{position:absolute;inset:0;border-radius:50%;border:3px solid rgba(166,33,46,.12);border-top-color:#A6212E;border-right-color:#D9B96A;animation:he-spin 1.05s linear infinite}
+  .he-ring:after{content:"";position:absolute;inset:12px;border-radius:50%;border:2px solid rgba(217,185,106,.25);border-bottom-color:#A6212E;animation:he-spin 1.7s linear reverse infinite}
+  @keyframes he-spin{to{transform:rotate(360deg)}}
+  .he-bar{width:190px;height:4px;border-radius:99px;background:rgba(166,33,46,.12);margin:18px auto 10px;overflow:hidden}
+  .he-bar span{display:block;width:40%;height:100%;border-radius:99px;background:linear-gradient(90deg,#D9B96A,#A6212E);animation:he-slide 1.25s ease-in-out infinite}
+  @keyframes he-slide{0%{transform:translateX(-110%)}100%{transform:translateX(360%)}}
+  #he-loader{transition:opacity .45s ease}
+  @media (prefers-reduced-motion:reduce){.he-ring,.he-ring:after,.he-bar span{animation:none}}
+</style>
+<script>
+(function(){
+  var msgs=["Firing up the farm…","Picking the freshest birds…","Sharpening the knives…","Almost ready…"],i=0;
+  var el=document.getElementById("he-msg");
+  var t=setInterval(function(){ if(!el||!el.isConnected){clearInterval(t);return;} i=(i+1)%msgs.length; el.style.opacity=0; setTimeout(function(){el.textContent=msgs[i];el.style.opacity=1;},220); },1600);
+  if(el) el.style.transition="opacity .22s ease";
+  // fade the loader out once the app has painted
+  var obs=setInterval(function(){
+    var root=document.getElementById("root");
+    if(root && root.children.length>1){
+      clearInterval(obs); clearInterval(t);
+      var L=document.getElementById("he-loader");
+      if(L){ L.style.opacity=0; setTimeout(function(){ L.remove(); },480); }
+    }
+  },250);
+})();
+</script>
 </div>
 <script>
 /* If anything fails, show a readable message instead of a blank page */
@@ -300,10 +332,22 @@ function App() {
   }, []);
 
   // customer app only ever APPENDS orders — it never edits catalog/settings
+  const [custPhone, setCustPhone] = useState(() => { try { return localStorage.getItem("he-cust") || ""; } catch { return ""; } });
+
+  // returning customer: quietly keep their live order status up to date
+  useEffect(() => {
+    if (!loaded || !custPhone) return;
+    const t = setInterval(async () => {
+      try { const r = await window.storage.get("huntandeat-orders", true); if (r) setOrders(JSON.parse(r.value)); } catch {}
+    }, 30000);
+    return () => clearInterval(t);
+  }, [loaded, custPhone]);
+
   const placeOrder = async (o) => {
     const latest = await loadKey("huntandeat-orders", []);
     const next = [o, ...latest];
     setOrders(next);
+    setCustPhone((o.phone || "").replace(/\D/g, "").slice(-10));
     await saveKey("huntandeat-orders", next);
   };
 
@@ -355,13 +399,18 @@ function App() {
         @keyframes fadeup { from { opacity: 0; transform: translateY(8px);} to { opacity: 1; transform: none; } }
         @media (prefers-reduced-motion: reduce) { .fadeup { animation: none; } }
       `}</style>
-      <Shop products={products} categories={categories} zones={zones} slots={slots} settings={settings} orders={orders} onPlaceOrder={placeOrder} />
+      <Shop products={products} categories={categories} zones={zones} slots={slots} settings={settings} orders={orders} custPhone={custPhone} onPlaceOrder={placeOrder} />
     </div>
   );
 }
 
 /* ================================ SHOP ================================ */
-function Shop({ products, categories, zones, slots, settings, orders, onPlaceOrder }) {
+function Shop({ products, categories, zones, slots, settings, orders, custPhone, onPlaceOrder }) {
+  const myOrders = custPhone
+    ? (orders || []).filter((o) => (o.phone || "").replace(/\D/g, "").endsWith(custPhone.slice(-10)))
+        .sort((a, b) => (a.placedAt < b.placedAt ? 1 : -1))
+    : [];
+  const liveOrder = myOrders.find((o) => o.status !== "Delivered" && o.status !== "Cancelled");
   const cats = [CATEGORIES[0], ...(categories && categories.length ? categories : CATEGORIES.slice(1))];
   const [cat, setCat] = useState("all");
   const [search, setSearch] = useState("");
@@ -418,7 +467,7 @@ function Shop({ products, categories, zones, slots, settings, orders, onPlaceOrd
               style={{ width: "100%", padding: "12px 20px", borderRadius: 999, border: "none", outline: "none", fontSize: 14, background: "#FFFDF8", boxSizing: "border-box", boxShadow: "inset 0 2px 6px rgba(94,15,24,.12)" }} />
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            <button className="hdr-btn" onClick={() => setTrackOpen(true)} style={{ background: "transparent", border: "1.5px solid rgba(233,200,155,.55)", color: "#F3DCC0", borderRadius: 999, padding: "10px 18px", cursor: "pointer", fontSize: 13, fontWeight: 700, letterSpacing: 0.3 }}>Track order</button>
+            <button className="hdr-btn" onClick={() => setTrackOpen(true)} style={{ background: "transparent", border: "1.5px solid rgba(233,200,155,.55)", color: "#F3DCC0", borderRadius: 999, padding: "10px 18px", cursor: "pointer", fontSize: 13, fontWeight: 700, letterSpacing: 0.3 }}>My orders{myOrders.length ? " · " + myOrders.length : ""}</button>
             <button className="hdr-btn" onClick={() => setCartOpen(true)} style={{ background: "linear-gradient(180deg, #F2CE8F, #E2AE5C)", border: "none", color: "#5E0F18", borderRadius: 999, padding: "10px 20px", cursor: "pointer", fontWeight: 800, fontSize: 14, boxShadow: "0 3px 10px rgba(0,0,0,.28)" }}>
               🧺 Cart{count > 0 ? ` · ${count}` : ""}
             </button>
@@ -427,6 +476,16 @@ function Shop({ products, categories, zones, slots, settings, orders, onPlaceOrd
       </header>
 
       {/* hero — styled after the Hunt & Eat poster */}
+      {liveOrder && (
+        <div onClick={() => setTrackOpen(true)} className="fadeup"
+          style={{ background: "linear-gradient(90deg,#1D6B3F,#177245)", color: "#fff", padding: "11px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, justifyContent: "center", flexWrap: "wrap", fontSize: 13.5 }}>
+          <span style={{ fontSize: 17 }}>{["📋", "🔪", "📦", "🛵", "🏠"][STATUSES.indexOf(liveOrder.status)] || "📋"}</span>
+          <b>Your order {liveOrder.id} — {liveOrder.status}</b>
+          <span style={{ opacity: .9 }}>· {liveOrder.slotLabel}</span>
+          <span style={{ background: "rgba(255,255,255,.2)", borderRadius: 999, padding: "3px 12px", fontWeight: 800, fontSize: 12 }}>Track ›</span>
+        </div>
+      )}
+
       <section className="hero-sec" style={{ background: "radial-gradient(1200px 400px at 18% -10%, #FFFDF6, transparent), linear-gradient(180deg, #FDF8EE, #F6EADB)", borderBottom: "1px solid #E9D9B8", padding: "44px 16px 52px" }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
           <div style={{ flex: "1 1 320px" }} className="fadeup">
@@ -514,7 +573,7 @@ function Shop({ products, categories, zones, slots, settings, orders, onPlaceOrd
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v2.7</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v3.2</span>
         </div>
       </footer>
 
@@ -568,7 +627,7 @@ function Shop({ products, categories, zones, slots, settings, orders, onPlaceOrd
           done={(order) => { onPlaceOrder(order); setCart({}); setCheckout(false); setPlaced(order); }} />
       )}
       {placed && <Success order={placed} settings={settings} close={() => setPlaced(null)} />}
-      {trackOpen && <Track orders={orders} close={() => setTrackOpen(false)} />}
+      {trackOpen && <Track orders={orders} settings={settings} close={() => setTrackOpen(false)} />}
     </div>
   );
 }
@@ -701,6 +760,32 @@ function checkZones(loc, zones) {
   return { inside: best.inside, zone: best.zone, dist: best.dist, gap: best.gap };
 }
 
+async function reverseGeocode(lat, lng) {
+  // 1st try: OpenStreetMap Nominatim
+  try {
+    const r = await fetch("https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1&lat=" + lat + "&lon=" + lng, { headers: { Accept: "application/json" } });
+    if (r.ok) {
+      const d = await r.json(), a = d.address || {};
+      const pin = (a.postcode || "").replace(/\D/g, "").slice(0, 6);
+      const area = a.suburb || a.neighbourhood || a.village || a.town || a.city_district || a.city || "";
+      const road = a.road || "";
+      if (pin || area) return { pincode: pin, area, road, label: [road, area].filter(Boolean).join(", ") };
+    }
+  } catch (e) {}
+  // 2nd try: BigDataCloud (free, no key) — covers gaps in OSM postcode data
+  try {
+    const r2 = await fetch("https://api.bigdatacloud.net/data/reverse-geocode-client?localityLanguage=en&latitude=" + lat + "&longitude=" + lng);
+    if (r2.ok) {
+      const d2 = await r2.json();
+      const pin = (d2.postcode || "").replace(/\D/g, "").slice(0, 6);
+      const area = d2.locality || d2.city || d2.localityInfo && d2.localityInfo.administrative && d2.localityInfo.administrative.length
+        ? (d2.locality || d2.city || "") : "";
+      if (pin || area) return { pincode: pin, area, road: "", label: area };
+    }
+  } catch (e) {}
+  return null;
+}
+
 function nearestZone(loc, zones) {
   const act = (zones || []).filter(zoneValid);
   if (!act.length || !loc) return null;
@@ -722,6 +807,8 @@ function MapPicker({ initial, zones, onSave, close }) {
   const [note, setNote] = useState("Loading map…");
   const [failed, setFailed] = useState(false);
   const [mapReady, setMapReady] = useState(false);
+  const [addr, setAddr] = useState(null);
+  const [geoBusy, setGeoBusy] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -765,6 +852,30 @@ function MapPicker({ initial, zones, onSave, close }) {
     if (!initial && !pos) map.fitBounds(layer.getBounds(), { padding: [24, 24], maxZoom: 15 });
   }, [pos, zones, mapReady]);
 
+  // look up the area + pincode for wherever the pin lands (debounced)
+  useEffect(() => {
+    if (!pos) return;
+    let alive = true;
+    setGeoBusy(true);
+    const t = setTimeout(async () => {
+      try { const a = await reverseGeocode(pos.lat, pos.lng); if (alive) setAddr(a); }
+      catch { if (alive) setAddr(null); }
+      finally { if (alive) setGeoBusy(false); }
+    }, 900);
+    return () => { alive = false; clearTimeout(t); };
+  }, [pos]);
+
+  const confirmPin = async () => {
+    if (!pos) return;
+    let a = addr;
+    if (!a || !a.pincode) {           // lookup not done (or no pincode yet) — try once more now
+      setGeoBusy(true);
+      try { a = await reverseGeocode(pos.lat, pos.lng); } catch (e) {}
+      setGeoBusy(false);
+    }
+    onSave({ lat: pos.lat, lng: pos.lng, pincode: a && a.pincode, area: a && a.label });
+  };
+
   const locateMe = () => {
     if (!navigator.geolocation) return setNote("GPS not supported on this device.");
     setNote("Finding your location…");
@@ -792,8 +903,8 @@ function MapPicker({ initial, zones, onSave, close }) {
         {note && <div style={{ fontSize: 12.5, color: BRAND.green, fontWeight: 700, marginTop: 8 }}>{note}</div>}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
           <button onClick={locateMe} type="button" style={{ background: "#fff", border: "1.5px solid " + BRAND.green, color: BRAND.green, borderRadius: 10, padding: "11px 8px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>🎯 Use my GPS</button>
-          <button onClick={() => pos && onSave(pos)} type="button" disabled={!pos}
-            style={{ background: pos ? BRAND.green : "#ccc", color: "#fff", border: "none", borderRadius: 10, padding: "11px 8px", fontWeight: 800, fontSize: 13, cursor: pos ? "pointer" : "not-allowed" }}>✓ Confirm location</button>
+          <button onClick={confirmPin} type="button" disabled={!pos || geoBusy}
+            style={{ background: pos ? BRAND.green : "#ccc", color: "#fff", border: "none", borderRadius: 10, padding: "11px 8px", fontWeight: 800, fontSize: 13, cursor: pos ? "pointer" : "not-allowed" }}>{geoBusy ? "Detecting area…" : "✓ Confirm location"}</button>
         </div>
         {(() => {
           const zc = checkZones(pos, zones);
@@ -804,10 +915,21 @@ function MapPicker({ initial, zones, onSave, close }) {
             </div>
           ) : (
             <div style={{ background: "#FBE9E7", color: "#8E1B25", borderRadius: 8, padding: "8px 10px", fontSize: 12.5, fontWeight: 700, marginTop: 8, textAlign: "center" }}>
-              ✕ Outside our delivery area — the nearest point of {zc.zone.name || "our delivery area"} is about {zc.dist.toFixed(1)} km away. Move the pin inside the green area.
+              🚧 We don't deliver here just yet — <b>we'll start servicing your area shortly!</b> If you're inside the green area, move the pin there.
             </div>
           );
         })()}
+        {pos && (geoBusy || addr) && (
+          <div style={{ background: "#FBF7EF", border: "1px solid #EDE3D0", borderRadius: 8, padding: "8px 10px", fontSize: 12.5, marginTop: 8, textAlign: "center" }}>
+            {geoBusy ? "Detecting your area…" : (
+              <>
+                <b>📍 {addr.label || "Location detected"}</b>
+                {addr.pincode ? <span style={{ color: "#177245", fontWeight: 800 }}> · {addr.pincode}</span> : ""}
+                <div style={{ fontSize: 11, color: "#8a857a" }}>Pincode will be filled in automatically</div>
+              </>
+            )}
+          </div>
+        )}
         {pos && <div style={{ fontSize: 11, color: "#8a857a", textAlign: "center", marginTop: 6 }}>Pin: {pos.lat}, {pos.lng}</div>}
       </div>
     </div>
@@ -830,6 +952,7 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
   const [err, setErr] = useState("");
   const [locBusy, setLocBusy] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
+  const [autoPin, setAutoPin] = useState(false);
 
   const captureLoc = () => {
     if (!navigator.geolocation) return setErr("GPS not supported on this device — you can continue without it.");
@@ -859,7 +982,7 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
     if (activeZones.length) {
       if (!form.loc) return setErr("Please set your delivery location on the map — we serve only inside our delivery area.");
       const zc = checkZones(form.loc, zones);
-      if (!zc.inside) return setErr(`Sorry, your location is outside our delivery area (nearest point about ${zc.dist.toFixed(1)} km away). Please WhatsApp us — we may still be able to help.`);
+      if (!zc.inside) return setErr("We'll start servicing your area shortly! We don't deliver to this location yet — tap 'Notify me when you launch here' above and we'll message you the moment we do.");
     } else {
       const serviceable = settings.pincodes.split(",").map((x) => x.trim());
       if (!serviceable.includes(form.pincode.trim()))
@@ -874,6 +997,7 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
       slotDate: day, slotId, slotLabel: slot.label,
       status: "Order received", placedAt: new Date().toISOString(),
     });
+    try { localStorage.setItem("he-cust", ph); } catch {}
   };
 
   return (
@@ -934,7 +1058,11 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
         <label style={fieldLbl}>
           <span>Pincode<Req /></span>
           <input inputMode="numeric" maxLength={6} placeholder="6-digit pincode" value={form.pincode}
-            onChange={(e) => setForm({ ...form, pincode: e.target.value.replace(/\D/g, "").slice(0, 6) })} style={inp} />
+            onChange={(e) => { setAutoPin(false); setForm({ ...form, pincode: e.target.value.replace(/\D/g, "").slice(0, 6) }); }}
+            style={{ ...inp, borderColor: autoPin ? "#177245" : "#e5dfd0", background: autoPin ? "#F5FBF7" : "#fff" }} />
+          {autoPin
+            ? <span style={{ fontSize: 11.5, color: "#177245", fontWeight: 700 }}>✓ Filled automatically from your map pin — edit if it's wrong</span>
+            : form.loc && <span style={{ fontSize: 11.5, color: "#8a857a" }}>Couldn't detect your pincode automatically — please type it</span>}
         </label>
 
         <div style={{ display: "grid", gap: 5 }}>
@@ -964,9 +1092,9 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
               </div>
             ) : (
               <div style={{ background: "#FBE9E7", border: "1px solid #F0C0BA", borderRadius: 8, padding: "9px 12px", fontSize: 12.5, fontWeight: 700, color: "#8E1B25" }}>
-                ✕ Sorry, this location is outside our delivery area (nearest point about {zc.dist.toFixed(1)} km away).{" "}
-                <a href={`https://wa.me/91${(settings.phone || "").replace(/\D/g, "").slice(-10)}?text=${encodeURIComponent("Hi Hunt & Eat, do you deliver to my area? My location: https://www.google.com/maps?q=" + form.loc.lat + "," + form.loc.lng)}`}
-                  target="_blank" rel="noreferrer" style={{ color: "#1FA855", fontWeight: 800 }}>Ask us on WhatsApp →</a>
+                🚧 <b>We'll start servicing your area shortly!</b> We're not delivering to this location yet — we're expanding across Chennai fast.{" "}
+                <a href={`https://wa.me/91${(settings.phone || "").replace(/\D/g, "").slice(-10)}?text=${encodeURIComponent("Hi Hunt & Eat! Please notify me when you start delivering to my area. My location: https://www.google.com/maps?q=" + form.loc.lat + "," + form.loc.lng)}`}
+                  target="_blank" rel="noreferrer" style={{ color: "#1FA855", fontWeight: 800 }}>Notify me when you launch here →</a>
               </div>
             );
           })()}
@@ -992,7 +1120,17 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
         Place order — {rup(total)}
       </button>
       {mapOpen && <MapPicker initial={form.loc} zones={zones} close={() => setMapOpen(false)}
-        onSave={(ll) => { setForm((f) => ({ ...f, loc: ll })); setMapOpen(false); setErr(""); }} />}
+        onSave={(ll) => {
+          const auto = ll.pincode && /^\d{6}$/.test(ll.pincode);
+          setForm((f) => ({
+            ...f,
+            loc: { lat: ll.lat, lng: ll.lng },
+            pincode: auto ? ll.pincode : f.pincode,
+            address: f.address.trim() ? f.address : (ll.area || f.address),
+          }));
+          setAutoPin(!!auto);
+          setMapOpen(false); setErr("");
+        }} />}
     </Drawer>
   );
 }
@@ -1038,40 +1176,156 @@ function Success({ order, settings, close }) {
   );
 }
 
-function Track({ orders, close }) {
-  const [q, setQ] = useState("");
-  const [found, setFound] = useState(null);
-  const search = () => {
-    const o = orders.find((x) => x.id.toLowerCase() === q.trim().toLowerCase() || x.phone.replace(/\D/g, "").endsWith(q.replace(/\D/g, "")) && q.trim().length >= 10);
-    setFound(o || "none");
+function Track({ orders, settings, close }) {
+  const savedPhone = (() => { try { return localStorage.getItem("he-cust") || ""; } catch { return ""; } })();
+  const [q, setQ] = useState(savedPhone);
+  const [list, setList] = useState(null);
+  const [open, setOpen] = useState(null);
+  const [live, setLive] = useState(orders);
+  const [busy, setBusy] = useState(false);
+  const [manual, setManual] = useState(!savedPhone);
+
+  const refresh = async (query) => {
+    setBusy(true);
+    let data = live;
+    try { const r = await window.storage.get("huntandeat-orders", true); if (r) data = JSON.parse(r.value); setLive(data); } catch {}
+    setBusy(false);
+    const s = (query != null ? query : q).trim();
+    if (!s) return setList([]);
+    const digits = s.replace(/\D/g, "");
+    const mine = data.filter((o) =>
+      o.id.toLowerCase() === s.toLowerCase() ||
+      (digits.length >= 10 && (o.phone || "").replace(/\D/g, "").endsWith(digits.slice(-10)))
+    ).sort((a, b) => (a.placedAt < b.placedAt ? 1 : -1));
+    if (digits.length >= 10) { try { localStorage.setItem("he-cust", digits.slice(-10)); } catch {} }
+    setList(mine);
+    if (mine.length === 1) setOpen(mine[0].id);
   };
+
+  // auto-load past orders for a returning customer
+  useEffect(() => { if (savedPhone) refresh(savedPhone); }, []);
+  // keep live status fresh while the panel is open
+  useEffect(() => {
+    if (list === null) return;
+    const t = setInterval(() => refresh(), 15000);
+    return () => clearInterval(t);
+  }, [list, q]);
+
+  const done = (o) => o.status === "Delivered" || o.status === "Cancelled";
+
   return (
-    <Modal close={close}>
-      <h3 className="display" style={{ fontWeight: 800, fontSize: 20, margin: "0 0 4px" }}>🔍 Freshness Tracker</h3>
-      <p style={{ fontSize: 13, color: "#5c584e", margin: "0 0 12px" }}>Enter your order ID (e.g. HE123456) or phone number.</p>
-      <div style={{ display: "flex", gap: 8 }}>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Order ID or phone" style={{ ...inp, flex: 1 }} />
-        <button onClick={search} style={{ background: BRAND.green, color: "#fff", border: "none", borderRadius: 10, padding: "0 18px", fontWeight: 700, cursor: "pointer" }}>Track</button>
-      </div>
-      {found === "none" && <div style={{ color: BRAND.red, fontSize: 13, marginTop: 10 }}>No order found. Check the ID and try again.</div>}
-      {found && found !== "none" && (
-        <div style={{ marginTop: 16 }}>
-          <div style={{ fontWeight: 700, marginBottom: 10 }}>{found.id} · {rup(found.total)} · {found.slotLabel}</div>
-          {found.status === "Cancelled" ? (
-            <div style={{ color: BRAND.red, fontWeight: 700 }}>This order was cancelled.</div>
-          ) : STATUSES.map((s, i) => {
-            const idx = STATUSES.indexOf(found.status);
-            const on = i <= idx;
-            return (
-              <div key={s} style={{ display: "flex", gap: 10, alignItems: "center", padding: "6px 0" }}>
-                <span style={{ width: 22, height: 22, borderRadius: 999, background: on ? BRAND.green : "#e5dfd0", color: "#fff", display: "grid", placeItems: "center", fontSize: 12 }}>{on ? "✓" : ""}</span>
-                <span style={{ fontWeight: on ? 700 : 500, color: on ? BRAND.ink : "#a39e93" }}>{["📋", "🔪", "📦", "🛵", "🏠"][i]} {s}</span>
-              </div>
-            );
-          })}
+    <Drawer title="My orders" close={close}>
+      {!manual ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#FBF7EF", border: "1px solid #EDE3D0", borderRadius: 10, padding: "10px 12px", marginBottom: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12.5, fontWeight: 700 }}>Orders for +91 •••••{savedPhone.slice(-4)}</span>
+          <button onClick={() => { try { localStorage.removeItem("he-cust"); } catch {} setManual(true); setQ(""); setList(null); }}
+            style={{ marginLeft: "auto", background: "none", border: "none", color: BRAND.green, fontSize: 11.5, fontWeight: 800, cursor: "pointer", textDecoration: "underline" }}>
+            Different number
+          </button>
+        </div>
+      ) : (
+        <>
+          <p style={{ fontSize: 12.5, color: "#6b675e", margin: "0 0 10px" }}>
+            Enter your mobile number to see all your orders, or an order ID (e.g. HE123456).
+          </p>
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && refresh()}
+              placeholder="Mobile number or order ID" inputMode="tel" style={{ ...inp, flex: 1 }} />
+            <button onClick={() => refresh()} style={{ background: BRAND.green, color: "#fff", border: "none", borderRadius: 10, padding: "0 20px", fontWeight: 800, cursor: "pointer" }}>
+              {busy ? "…" : "Find"}
+            </button>
+          </div>
+        </>
+      )}
+      {list === null && savedPhone && (
+        <div style={{ textAlign: "center", color: "#8a857a", padding: "30px 0", fontSize: 13.5 }}>Loading your orders…</div>
+      )}
+
+      {list && list.length === 0 && (
+        <div style={{ textAlign: "center", color: "#8a857a", padding: "30px 10px", fontSize: 13.5 }}>
+          No orders found for that number.<br />Check the number you used while ordering.
         </div>
       )}
-    </Modal>
+
+      {list && list.length > 0 && (
+        <>
+          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 1.5, color: "#8a857a", margin: "10px 0 8px" }}>
+            {list.length} ORDER{list.length > 1 ? "S" : ""} FOUND
+          </div>
+          <div style={{ display: "grid", gap: 10 }}>
+            {list.map((o) => {
+              const idx = STATUSES.indexOf(o.status);
+              const expanded = open === o.id;
+              const cancelled = o.status === "Cancelled";
+              return (
+                <div key={o.id} style={{ border: "1px solid #EDE3D0", borderRadius: 12, overflow: "hidden", background: "#fff" }}>
+                  <div onClick={() => setOpen(expanded ? null : o.id)} style={{ padding: "12px 14px", cursor: "pointer" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                      <div>
+                        <div className="display" style={{ fontWeight: 800, fontSize: 15 }}>{o.id}</div>
+                        <div style={{ fontSize: 11.5, color: "#8a857a" }}>
+                          {new Date(o.placedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} · {o.slotLabel}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontWeight: 800 }}>{rup(o.total)}</div>
+                        <span style={{ fontSize: 11, fontWeight: 800, borderRadius: 999, padding: "2px 9px",
+                          background: cancelled ? "#FBE9E7" : done(o) ? "#EAF6EE" : "#FFF6E5",
+                          color: cancelled ? BRAND.red : done(o) ? "#177245" : "#8E6A1F" }}>
+                          {o.status}
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 12.5, color: "#5c584e", marginTop: 6 }}>
+                      {o.items.map((i) => `${i.qty}× ${i.name}`).join(" · ")}
+                    </div>
+                    <div style={{ fontSize: 11.5, color: BRAND.green, fontWeight: 700, marginTop: 6 }}>
+                      {expanded ? "Hide details ▲" : "View tracking ▼"}
+                    </div>
+                  </div>
+
+                  {expanded && (
+                    <div style={{ borderTop: "1px solid #F2EADB", padding: "12px 14px", background: "#FDFBF6" }}>
+                      {cancelled ? (
+                        <div style={{ color: BRAND.red, fontWeight: 700, fontSize: 13.5 }}>This order was cancelled.</div>
+                      ) : (
+                        STATUSES.map((s, i) => {
+                          const on = i <= idx, cur = i === idx;
+                          return (
+                            <div key={s} style={{ display: "flex", gap: 10, alignItems: "center", padding: "5px 0" }}>
+                              <span style={{ width: 22, height: 22, borderRadius: 999, background: on ? BRAND.green : "#e5dfd0", color: "#fff", display: "grid", placeItems: "center", fontSize: 12 }}>{on ? "✓" : ""}</span>
+                              <span style={{ fontWeight: cur ? 800 : on ? 600 : 500, color: on ? BRAND.ink : "#a39e93", fontSize: 13.5 }}>
+                                {["📋", "🔪", "📦", "🛵", "🏠"][i]} {s}{cur ? " — now" : ""}
+                              </span>
+                            </div>
+                          );
+                        })
+                      )}
+                      <div style={{ borderTop: "1px dashed #E5DFD0", marginTop: 10, paddingTop: 10, fontSize: 12.5, color: "#5c584e" }}>
+                        <div>📍 {o.address}, {o.pincode}</div>
+                        <div>{o.pay === "cod" ? "💵 Cash on delivery" : "📱 UPI on delivery"} · {rup(o.total)}</div>
+                        {o.rider && !done(o) && <div>🛵 Rider assigned: {o.rider}</div>}
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
+                        <a href={`https://wa.me/91${(settings.phone || "").replace(/\D/g, "").slice(-10)}?text=${encodeURIComponent("Hi Hunt & Eat, about my order " + o.id + ": ")}`}
+                          target="_blank" rel="noreferrer" style={{ background: "#1FA855", color: "#fff", borderRadius: 9, padding: "10px 0", textAlign: "center", fontWeight: 800, fontSize: 12.5, textDecoration: "none" }}>
+                          💬 Ask about this
+                        </a>
+                        <a href={`tel:${(settings.phone || "").replace(/\s/g, "")}`}
+                          style={{ background: BRAND.ink, color: "#fff", borderRadius: 9, padding: "10px 0", textAlign: "center", fontWeight: 800, fontSize: 12.5, textDecoration: "none" }}>
+                          📞 Call us
+                        </a>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: 11, color: "#a39e93", textAlign: "center", marginTop: 12 }}>Status updates automatically every 15 seconds</div>
+        </>
+      )}
+    </Drawer>
   );
 }
 
