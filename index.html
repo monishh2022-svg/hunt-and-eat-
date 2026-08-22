@@ -976,7 +976,7 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
   const now = new Date();
   const slotState = (s) => {
     if (!s.active) return { ok: false, why: "Unavailable" };
-    if (day === days[0].key && now.getHours() >= s.start - settings.cutoffHours) return { ok: false, why: "Cut-off passed" };
+    if (day === dkey(now) && now.getHours() + now.getMinutes() / 60 >= s.start - (settings.cutoffHours || 0)) return { ok: false, why: "Cut-off passed" };
     const booked = orders.filter((o) => o.slotDate === day && o.slotId === s.id && o.status !== "Cancelled").length;
     if (booked >= s.capacity) return { ok: false, why: "Slot full" };
     return { ok: true, left: s.capacity - booked };
