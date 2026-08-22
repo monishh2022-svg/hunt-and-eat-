@@ -315,6 +315,33 @@ function todayKey() {
   const d = new Date();
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
+// saves an out-of-area lead you can call back when you expand
+function joinWaitlist(d) {
+  try {
+    const base = trackBase(); if (!base) return;
+    fetch(base + "/" + TRACK_NS + "/waitlist/" + todayKey() + ".json", {
+      method: "POST",
+      body: JSON.stringify({ t: Date.now(), phone: d.phone, name: d.name || "", pincode: d.pincode || "",
+        la: d.loc ? d.loc.lat : null, ln: d.loc ? d.loc.lng : null, area: (d.area || "").slice(0, 120) }),
+    }).catch(function () {});
+  } catch {}
+}
+
+// records a pinned location (no name/phone) so you can see where demand is
+function trackPin(loc, zc, pincode, blocked) {
+  try {
+    const base = trackBase(); if (!base || !loc) return;
+    fetch(base + "/" + TRACK_NS + "/pins/" + todayKey() + ".json", {
+      method: "POST",
+      body: JSON.stringify({
+        t: Date.now(), v: visitorId(), la: loc.lat, ln: loc.lng,
+        in: zc && zc.inside ? 1 : 0, d: zc && zc.dist != null ? Number(zc.dist.toFixed(2)) : null,
+        z: (zc && zc.zone && zc.zone.name) || "", pc: pincode || "", b: blocked ? 1 : 0,
+      }),
+    }).catch(function () {});
+  } catch {}
+}
+
 // records the furthest point each visitor reaches — once per step, per session
 function trackStep(step) {
   try {
@@ -626,7 +653,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v3.3</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v3.6</span>
         </div>
       </footer>
 
@@ -984,6 +1011,7 @@ function MapPicker({ initial, zones, onSave, close }) {
           </div>
         )}
         {pos && <div style={{ fontSize: 11, color: "#8a857a", textAlign: "center", marginTop: 6 }}>Pin: {pos.lat}, {pos.lng}</div>}
+        <div style={{ fontSize: 10.5, color: "#a39e93", textAlign: "center", marginTop: 4 }}>We note pinned areas (no personal details) to plan new delivery zones.</div>
       </div>
     </div>
   );
@@ -1010,6 +1038,7 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
   const [err, setErr] = useState("");
   const [locBusy, setLocBusy] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
+  const [waitDone, setWaitDone] = useState(false);
   const [autoPin, setAutoPin] = useState(false);
 
   const captureLoc = () => {
@@ -1040,7 +1069,7 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
     if (activeZones.length) {
       if (!form.loc) return setErr("Please set your delivery location on the map — we serve only inside our delivery area.");
       const zc = checkZones(form.loc, zones);
-      if (!zc.inside) return setErr("We'll start servicing your area shortly! We don't deliver to this location yet — tap 'Notify me when you launch here' above and we'll message you the moment we do.");
+      if (!zc.inside) { trackPin(form.loc, zc, form.pincode, 1); return setErr("We'll start servicing your area shortly! We don't deliver to this location yet — tap 'Notify me when you launch here' above and we'll message you the moment we do."); }
     } else {
       const serviceable = settings.pincodes.split(",").map((x) => x.trim());
       if (!serviceable.includes(form.pincode.trim()))
@@ -1173,9 +1202,24 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
               </div>
             ) : (
               <div style={{ background: "#FBE9E7", border: "1px solid #F0C0BA", borderRadius: 8, padding: "9px 12px", fontSize: 12.5, fontWeight: 700, color: "#8E1B25" }}>
-                🚧 <b>We'll start servicing your area shortly!</b> We're not delivering to this location yet — we're expanding across Chennai fast.{" "}
-                <a href={`https://wa.me/91${(settings.phone || "").replace(/\D/g, "").slice(-10)}?text=${encodeURIComponent("Hi Hunt & Eat! Please notify me when you start delivering to my area. My location: https://www.google.com/maps?q=" + form.loc.lat + "," + form.loc.lng)}`}
-                  target="_blank" rel="noreferrer" style={{ color: "#1FA855", fontWeight: 800 }}>Notify me when you launch here →</a>
+                🚧 <b>We'll start servicing your area shortly!</b> We're not delivering to this location yet — we're expanding across Chennai fast.
+                {waitDone ? (
+                  <div style={{ marginTop: 8, color: "#177245", fontWeight: 800 }}>✓ Thanks! We'll message you the moment we launch in your area.</div>
+                ) : (
+                  <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                    <button type="button" onClick={() => {
+                        const ph = (form.phone || "").replace(/\D/g, "").slice(-10);
+                        if (!/^[6-9]\d{9}$/.test(ph)) { setErr("Enter your mobile number above first, then tap Notify me."); return; }
+                        joinWaitlist({ phone: ph, name: form.name, loc: form.loc, pincode: form.pincode, area: form.address });
+                        setWaitDone(true);
+                      }}
+                      style={{ background: "#8E1B25", color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontWeight: 800, fontSize: 12.5, cursor: "pointer" }}>
+                      🔔 Notify me when you launch here
+                    </button>
+                    <a href={`https://wa.me/91${(settings.phone || "").replace(/\D/g, "").slice(-10)}?text=${encodeURIComponent("Hi Hunt & Eat! Please notify me when you start delivering to my area. My location: https://www.google.com/maps?q=" + form.loc.lat + "," + form.loc.lng)}`}
+                      target="_blank" rel="noreferrer" style={{ background: "#1FA855", color: "#fff", borderRadius: 8, padding: "8px 14px", fontWeight: 800, fontSize: 12.5, textDecoration: "none" }}>WhatsApp us</a>
+                  </div>
+                )}
               </div>
             );
           })()}
@@ -1202,6 +1246,8 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
       </button>
       {mapOpen && <MapPicker initial={form.loc} zones={zones} close={() => setMapOpen(false)}
         onSave={(ll) => {
+          trackStep("location_set");
+          trackPin({ lat: ll.lat, lng: ll.lng }, checkZones({ lat: ll.lat, lng: ll.lng }, zones), ll.pincode || form.pincode, 0);
           const auto = ll.pincode && /^\d{6}$/.test(ll.pincode);
           setForm((f) => ({
             ...f,
