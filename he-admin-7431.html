@@ -174,15 +174,32 @@ function audioCtx() {
   } catch {}
   return __ac;
 }
+const VISIT_NS = "huntandeat";
 const TONES = {
   bell:  { label: "🔔 Doorbell", notes: [[880, 0, .22], [659, .2, .55]] },
   ding:  { label: "🛎️ Double ding", notes: [[1318, 0, .13], [1318, .19, .13], [1046, .38, .4]] },
   chime: { label: "🎵 Kitchen chime", notes: [[523, 0, .16], [659, .14, .16], [784, .28, .16], [1046, .42, .55]] },
-  alert: { label: "🚨 Urgent alert", notes: [[988, 0, .1], [988, .17, .1], [988, .34, .1], [1175, .5, .3]] },
+  alert: { label: "📢 Urgent beeps", notes: [[988, 0, .1], [988, .17, .1], [988, .34, .1], [1175, .5, .3]] },
+  siren: { label: "🚨 ALARM siren", sweep: [[440, 950, .45], [950, 440, .45], [440, 950, .45], [950, 440, .45]] },
+  klaxon: { label: "⏰ Loud klaxon", notes: [[740, 0, .3], [560, .3, .3], [740, .62, .3], [560, .92, .3], [740, 1.24, .45]] },
 };
 function playTone(key, vol) {
   const ac = audioCtx(); if (!ac) return;
   const t = TONES[key] || TONES.bell;
+  if (t.sweep) { // continuous rising/falling alarm
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = "sawtooth";
+    let time = ac.currentTime;
+    t.sweep.forEach(([f1, f2, d]) => { o.frequency.setValueAtTime(f1, time); o.frequency.linearRampToValueAtTime(f2, time + d); time += d; });
+    const V = (vol == null ? 0.5 : vol) * 0.55;
+    g.gain.setValueAtTime(0, ac.currentTime);
+    g.gain.linearRampToValueAtTime(V, ac.currentTime + 0.05);
+    g.gain.setValueAtTime(V, time - 0.12);
+    g.gain.exponentialRampToValueAtTime(0.001, time);
+    o.connect(g); g.connect(ac.destination);
+    o.start(); o.stop(time + 0.05);
+    return;
+  }
   t.notes.forEach(([f, st, dur]) => {
     [1, 2].forEach((mult, mi) => {
       const o = ac.createOscillator(), g = ac.createGain();
@@ -241,9 +258,12 @@ function AdminApp() {
   const seenCount = useRef(0);
   const [sound, setSound] = useState(() => { try { return localStorage.getItem("alert-sound") !== "off"; } catch { return true; } });
   const [tone, setTone] = useState(() => { try { return localStorage.getItem("alert-tone") || "bell"; } catch { return "bell"; } });
-  const soundRef = useRef(sound), toneRef = useRef(tone), ringRef = useRef(null);
-  useEffect(() => { soundRef.current = sound; toneRef.current = tone;
-    try { localStorage.setItem("alert-sound", sound ? "on" : "off"); localStorage.setItem("alert-tone", tone); } catch {} }, [sound, tone]);
+  const [vol, setVol] = useState(() => { try { return Number(localStorage.getItem("alert-vol")) || 0.5; } catch { return 0.5; } });
+  const [repeatSec, setRepeatSec] = useState(() => { try { return Number(localStorage.getItem("alert-repeat") ?? 12); } catch { return 12; } });
+  const soundRef = useRef(sound), toneRef = useRef(tone), volRef = useRef(vol), ringRef = useRef(null);
+  useEffect(() => { soundRef.current = sound; toneRef.current = tone; volRef.current = vol;
+    try { localStorage.setItem("alert-sound", sound ? "on" : "off"); localStorage.setItem("alert-tone", tone);
+      localStorage.setItem("alert-vol", String(vol)); localStorage.setItem("alert-repeat", String(repeatSec)); } catch {} }, [sound, tone, vol, repeatSec]);
   const [newOrders, setNewOrders] = useState(0);
 
   const refresh = async (silent) => {
@@ -257,7 +277,7 @@ function AdminApp() {
     if (silent && seenCount.current && o.length > seenCount.current) {
       const n = o.length - seenCount.current;
       setNewOrders(n);
-      if (soundRef.current) playTone(toneRef.current);
+      if (soundRef.current) playTone(toneRef.current, volRef.current);
       try {
         if ("Notification" in window && Notification.permission === "granted") {
           const top = o[0];
@@ -278,9 +298,10 @@ function AdminApp() {
   useEffect(() => {
     if (!newOrders || !sound) { if (ringRef.current) { clearInterval(ringRef.current); ringRef.current = null; } return; }
     if (ringRef.current) return;
-    ringRef.current = setInterval(() => playTone(toneRef.current), 12000);
+    if (!repeatSec) return;
+    ringRef.current = setInterval(() => playTone(toneRef.current, volRef.current), repeatSec * 1000);
     return () => { if (ringRef.current) { clearInterval(ringRef.current); ringRef.current = null; } };
-  }, [newOrders, sound]);
+  }, [newOrders, sound, repeatSec]);
 
   const saveCore = async (patch) => {
     setSaving(true);
@@ -331,7 +352,7 @@ function AdminApp() {
   const revenue = active.filter((o) => o.status === "Delivered").reduce((s, o) => s + o.total, 0);
   const todayRevenue = todays.reduce((s, o) => s + o.total, 0);
 
-  const tabs = [["dash", "📊 Dashboard"], ["orders", `📦 Orders${newOrders ? ` (+${newOrders} new)` : ""}`], ["menu", "🍗 Menu"], ["cash", "💰 Cash"], ["slots", "🕐 Slots"], ["settings", "⚙️ Settings"]];
+  const tabs = [["dash", "📊 Dashboard"], ["orders", `📦 Orders${newOrders ? ` (+${newOrders} new)` : ""}`], ["menu", "🍗 Menu"], ["visits", "📈 Visitors"], ["cash", "💰 Cash"], ["slots", "🕐 Slots"], ["settings", "⚙️ Settings"]];
 
   return (
     <Shell>
@@ -341,7 +362,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v3.1</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v3.2</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -386,13 +407,31 @@ function AdminApp() {
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
                 {Object.keys(TONES).map((k) => (
-                  <button key={k} onClick={() => { audioCtx(); setTone(k); playTone(k); }}
+                  <button key={k} onClick={() => { audioCtx(); setTone(k); playTone(k, vol); }}
                     style={{ border: "1.5px solid " + (tone === k ? BRAND.red : "#e5dfd0"), background: tone === k ? BRAND.red : "#fff", color: tone === k ? "#fff" : "#241E1A", borderRadius: 999, padding: "8px 14px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
                     {TONES[k].label}
                   </button>
                 ))}
-                <button onClick={() => { audioCtx(); playTone(toneRef.current); }}
+                <button onClick={() => { audioCtx(); playTone(toneRef.current, vol); }}
                   style={{ marginLeft: "auto", background: "#241E1A", color: "#fff", border: "none", borderRadius: 999, padding: "8px 16px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>▶ Test</button>
+              </div>
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
+                <label style={{ fontSize: 12.5, fontWeight: 700, display: "flex", gap: 8, alignItems: "center" }}>
+                  🔊 Volume
+                  <input type="range" min="0.15" max="1" step="0.05" value={vol}
+                    onChange={(e) => setVol(Number(e.target.value))} onMouseUp={() => playTone(toneRef.current, vol)} style={{ width: 120 }} />
+                  <span style={{ width: 34 }}>{Math.round(vol * 100)}%</span>
+                </label>
+                <label style={{ fontSize: 12.5, fontWeight: 700, display: "flex", gap: 8, alignItems: "center" }}>
+                  🔁 Repeat
+                  <select value={repeatSec} onChange={(e) => setRepeatSec(Number(e.target.value))}
+                    style={{ ...inp, width: "auto", padding: "6px 10px", fontSize: 12.5, fontWeight: 700 }}>
+                    <option value={0}>Play once</option>
+                    <option value={6}>Every 6 sec</option>
+                    <option value={12}>Every 12 sec</option>
+                    <option value={30}>Every 30 sec</option>
+                  </select>
+                </label>
               </div>
             </div>
             <h3 className="display" style={{ fontWeight: 800, fontSize: 17 }}>Today's slot load</h3>
@@ -411,6 +450,7 @@ function AdminApp() {
         )}
         {tab === "orders" && <Orders orders={orders} saveOrders={saveOrders} />}
         {tab === "menu" && <Menu products={products} cats={categories} save={(p) => saveCore({ products: p })} saveCats={(c) => saveCore({ categories: c })} />}
+        {tab === "visits" && <Visitors orders={orders} />}
         {tab === "cash" && <Cash orders={orders} saveOrders={saveOrders} />}
         {tab === "slots" && <Slots slots={slots} save={(s) => saveCore({ slots: s })} />}
         {tab === "settings" && <Settings settings={settings} save={(s) => saveCore({ settings: s })} zones={core?.zones || []} saveZones={(z) => saveCore({ zones: z })} />}
@@ -729,6 +769,89 @@ function ZoneEditor({ zones, onSave, close }) {
         Drawn zones need 3+ points to save. No active zones = geofencing off (pincode list used instead).
       </p>
     </Modal>
+  );
+}
+
+function Visitors({ orders }) {
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const dbUrl = (typeof FIREBASE_RTDB_URL !== "undefined" && FIREBASE_RTDB_URL) ? FIREBASE_RTDB_URL.replace(/\/+$/, "") : null;
+
+  const load = async () => {
+    if (!dbUrl) { setData("nodb"); return; }
+    setBusy(true);
+    const days = [];
+    for (let i = 6; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); days.push(dkey(d)); }
+    const out = [];
+    for (const d of days) {
+      try {
+        const r = await fetch(dbUrl + "/" + VISIT_NS + "/visits/" + d + ".json");
+        const j = r.ok ? await r.json() : null;
+        const rows = j ? Object.keys(j).map((k) => j[k]) : [];
+        const seen = {}; rows.forEach((x) => { if (x && x.v) seen[x.v] = 1; });
+        out.push({ date: d, visits: rows.length, uniq: Object.keys(seen).length, refs: rows.map((x) => (x && x.r) || "direct") });
+      } catch { out.push({ date: d, visits: 0, uniq: 0, refs: [] }); }
+    }
+    setData(out); setBusy(false);
+  };
+  useEffect(() => { load(); }, []);
+
+  if (data === "nodb") return <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 10, padding: 14, fontSize: 13.5 }}>Visitor tracking needs the database connected (FIREBASE_RTDB_URL).</div>;
+  if (!data) return <div style={{ color: "#8a857a", padding: 20 }}>Loading visitor data…</div>;
+
+  const today = data[data.length - 1] || { visits: 0, uniq: 0 };
+  const week = data.reduce((s, d) => s + d.visits, 0);
+  const weekU = (() => { const all = {}; data.forEach((d) => d.refs.forEach(() => {})); return data.reduce((s, d) => s + d.uniq, 0); })();
+  const ordersOn = (d) => orders.filter((o) => (o.placedAt || "").slice(0, 10) === d && o.status !== "Cancelled").length;
+  const todayOrders = ordersOn(today.date);
+  const conv = today.visits ? Math.round((todayOrders / today.visits) * 100) : 0;
+  const max = Math.max.apply(null, data.map((d) => d.visits).concat([1]));
+
+  const refCount = {};
+  data.forEach((d) => d.refs.forEach((r) => {
+    let host = "Direct / WhatsApp";
+    try { if (r && r !== "direct") host = new URL(r).hostname.replace("www.", ""); } catch {}
+    refCount[host] = (refCount[host] || 0) + 1;
+  }));
+  const refs = Object.keys(refCount).sort((a, b) => refCount[b] - refCount[a]).slice(0, 6);
+
+  return (
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12, marginBottom: 18 }}>
+        <Stat l="Visits today" v={today.visits} sub={today.uniq + " unique device(s)"} />
+        <Stat l="Orders today" v={todayOrders} sub="from these visits" />
+        <Stat l="Conversion today" v={conv + "%"} sub="visits that ordered" hot={today.visits > 10 && conv < 5} />
+        <Stat l="Visits this week" v={week} sub="last 7 days" />
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h3 className="display" style={{ fontWeight: 800, fontSize: 17, margin: "0 0 10px" }}>Last 7 days</h3>
+        <button onClick={load} style={{ background: "#fff", border: "1.5px solid " + BRAND.red, color: BRAND.red, borderRadius: 8, padding: "6px 14px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>{busy ? "…" : "↻ Refresh"}</button>
+      </div>
+      <div style={{ background: "#fff", borderRadius: 12, padding: 16, display: "flex", alignItems: "flex-end", gap: 10, height: 170 }}>
+        {data.map((d) => (
+          <div key={d.date} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+            <div style={{ fontSize: 11, fontWeight: 800 }}>{d.visits}</div>
+            <div title={d.uniq + " unique"} style={{ width: "100%", background: BRAND.red, borderRadius: "6px 6px 0 0", height: Math.max(4, Math.round((d.visits / max) * 100)) + "px", opacity: .85 }} />
+            <div style={{ fontSize: 10.5, color: "#8a857a" }}>{new Date(d.date + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</div>
+            <div style={{ fontSize: 10, color: "#b3ada0" }}>{ordersOn(d.date)} ord</div>
+          </div>
+        ))}
+      </div>
+
+      <h3 className="display" style={{ fontWeight: 800, fontSize: 17, margin: "20px 0 8px" }}>Where visitors came from</h3>
+      <div style={{ display: "grid", gap: 6 }}>
+        {refs.length === 0 && <div style={{ color: "#8a857a", fontSize: 13 }}>No visits recorded yet.</div>}
+        {refs.map((r) => (
+          <div key={r} style={{ background: "#fff", borderRadius: 10, padding: "9px 14px", display: "flex", justifyContent: "space-between", fontSize: 13.5 }}>
+            <span style={{ fontWeight: 600 }}>{r}</span><b>{refCount[r]}</b>
+          </div>
+        ))}
+      </div>
+      <p style={{ fontSize: 11.5, color: "#8a857a", marginTop: 12 }}>
+        Counts one visit per device per browsing session. Links shared on WhatsApp usually show as “Direct / WhatsApp”.
+      </p>
+    </>
   );
 }
 
