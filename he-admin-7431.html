@@ -353,7 +353,7 @@ function AdminApp() {
   const revenue = active.filter((o) => o.status === "Delivered").reduce((s, o) => s + o.total, 0);
   const todayRevenue = todays.reduce((s, o) => s + o.total, 0);
 
-  const tabs = [["dash", "📊 Dashboard"], ["orders", `📦 Orders${newOrders ? ` (+${newOrders} new)` : ""}`], ["menu", "🍗 Menu"], ["customers", "👥 Customers"], ["visits", "📈 Visitors"], ["demand", "📍 Demand map"], ["cash", "💰 Cash"], ["slots", "🕐 Slots"], ["settings", "⚙️ Settings"]];
+  const tabs = [["dash", "📊 Dashboard"], ["orders", `📦 Orders${newOrders ? ` (+${newOrders} new)` : ""}`], ["menu", "🍗 Menu"], ["customers", "👥 Customers"], ["visits", "📈 Visitors"], ["demand", "📍 Demand map"], ["riders", "🛵 Riders"], ["cash", "💰 Cash"], ["slots", "🕐 Slots"], ["settings", "⚙️ Settings"]];
 
   return (
     <Shell>
@@ -363,7 +363,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v3.8</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v3.9</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -454,6 +454,7 @@ function AdminApp() {
         {tab === "customers" && <Customers orders={orders} />}
         {tab === "visits" && <Visitors orders={orders} />}
         {tab === "demand" && <Demand zones={core?.zones || []} />}
+        {tab === "riders" && <Riders settings={settings} />}
         {tab === "cash" && <Cash orders={orders} saveOrders={saveOrders} />}
         {tab === "slots" && <Slots slots={slots} save={(s) => saveCore({ slots: s })} />}
         {tab === "settings" && <Settings settings={settings} save={(s) => saveCore({ settings: s })} zones={core?.zones || []} saveZones={(z) => saveCore({ zones: z })} />}
@@ -1083,6 +1084,123 @@ function downloadCSV(filename, rows) {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob); a.download = filename; document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
+
+function Riders({ settings }) {
+  const base = (typeof FIREBASE_RTDB_URL !== "undefined" && FIREBASE_RTDB_URL) ? FIREBASE_RTDB_URL.replace(/\/+$/, "") : null;
+  const url = base ? base + "/huntandeat/riders" : null;
+  const [list, setList] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [nm, setNm] = useState("");
+  const [ph, setPh] = useState("");
+  const [err, setErr] = useState("");
+
+  const load = async () => {
+    if (!url) { setList("nodb"); return; }
+    setBusy(true);
+    try {
+      const r = await fetch(url + ".json");
+      const j = r.ok ? await r.json() : null;
+      setList(j ? Object.keys(j).map((k) => ({ phone: k, ...j[k] })).sort((a, b) => (a.name || "").localeCompare(b.name || "")) : []);
+    } catch (e) { setList([]); }
+    setBusy(false);
+  };
+  useEffect(() => { load(); }, []);
+
+  const write = async (phone, patch) => {
+    await fetch(url + "/" + phone + ".json", { method: "PATCH", body: JSON.stringify(patch) });
+    load();
+  };
+  const makeCode = () => String(Math.floor(100000 + Math.random() * 900000));
+
+  const addRider = async () => {
+    const p = ph.replace(/\D/g, "").slice(-10);
+    if (!nm.trim()) return setErr("Enter the rider's name.");
+    if (!/^[6-9]\d{9}$/.test(p)) return setErr("Enter a valid 10-digit mobile number.");
+    setErr(""); setBusy(true);
+    await write(p, { name: nm.trim(), active: true, otp: null, otpExp: null, tries: 0, token: null, addedAt: Date.now() });
+    setNm(""); setPh(""); setBusy(false);
+  };
+
+  // a code is valid for 10 minutes and dies the moment it is used
+  const sendOtp = async (r) => {
+    const code = makeCode();
+    await write(r.phone, { otp: code, otpExp: Date.now() + 10 * 60 * 1000, tries: 0 });
+    const msg = encodeURIComponent(
+      "Hunt & Eat delivery login\n\nYour code is " + code + "\nIt works for 10 minutes and once only.\n\nOpen the rider app and enter it with your number " + r.phone + "."
+    );
+    window.open("https://wa.me/91" + r.phone + "?text=" + msg, "_blank");
+  };
+
+  if (list === "nodb") return <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 10, padding: 14, fontSize: 13.5 }}>Rider logins need the database connected (FIREBASE_RTDB_URL).</div>;
+  if (!list) return <div style={{ color: "#8a857a", padding: 20 }}>Loading riders…</div>;
+
+  const liveCode = (r) => r.otp && r.otpExp && Date.now() < r.otpExp;
+
+  return (
+    <>
+      <div style={{ background: "#fff", borderRadius: 12, padding: 14, marginBottom: 16, borderLeft: "4px solid " + BRAND.red }}>
+        <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 2 }}>🔐 Rider logins are OTP-only</div>
+        <div style={{ fontSize: 12.5, color: "#6b675e", marginBottom: 10, lineHeight: 1.6 }}>
+          Only numbers listed here can open the rider app, and only with a code you send. Codes last 10 minutes,
+          work once, and lock after 5 wrong tries. Pausing a rider signs them out everywhere.
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input style={{ ...inp, width: 170 }} placeholder="Rider name" value={nm} onChange={(e) => setNm(e.target.value)} />
+          <input style={{ ...inp, width: 170 }} placeholder="10-digit mobile" inputMode="numeric" value={ph}
+            onChange={(e) => setPh(e.target.value.replace(/\D/g, "").slice(0, 10))} />
+          <button onClick={addRider} disabled={busy}
+            style={{ background: BRAND.red, color: "#fff", border: "none", borderRadius: 10, padding: "10px 18px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+            + Add rider
+          </button>
+          <button onClick={load} style={{ background: "#fff", border: "1.5px solid " + BRAND.red, color: BRAND.red, borderRadius: 10, padding: "10px 16px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>↻ Refresh</button>
+        </div>
+        {err && <div style={{ color: BRAND.danger, fontSize: 12.5, fontWeight: 700, marginTop: 8 }}>{err}</div>}
+      </div>
+
+      {list.length === 0 && <div style={{ textAlign: "center", color: "#8a857a", padding: 26 }}>No riders yet. Add one above, then send them a code.</div>}
+      <div style={{ display: "grid", gap: 10 }}>
+        {list.map((r) => (
+          <div key={r.phone} style={{ background: "#fff", borderRadius: 12, padding: 14, opacity: r.active === false ? 0.6 : 1 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <div>
+                <b style={{ fontSize: 15 }}>{r.name || "—"}</b>
+                {r.active === false && <span style={{ background: "#FBE9E7", color: BRAND.danger, borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 800, marginLeft: 8 }}>PAUSED</span>}
+                {r.token && r.active !== false && <span style={{ background: "#EAF6EE", color: BRAND.ok, borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 800, marginLeft: 8 }}>SIGNED IN</span>}
+                <div style={{ fontSize: 12.5, color: "#5c584e" }}>📞 {r.phone}</div>
+              </div>
+              <div style={{ textAlign: "right", fontSize: 11.5, color: "#8a857a" }}>
+                {liveCode(r)
+                  ? <span style={{ color: "#8E6A1F", fontWeight: 800 }}>Code {r.otp} · valid {Math.max(0, Math.round((r.otpExp - Date.now()) / 60000))} min</span>
+                  : r.lastLogin ? "Last login " + new Date(r.lastLogin).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "Never logged in"}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
+              <button onClick={() => sendOtp(r)}
+                style={{ background: "#1FA855", color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 12.5, fontWeight: 800, cursor: "pointer" }}>
+                {liveCode(r) ? "Resend new code" : "Send login code"}
+              </button>
+              <button onClick={() => write(r.phone, { active: r.active === false, token: null })}
+                style={{ background: "#f0ece1", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+                {r.active === false ? "Allow access" : "Pause access"}
+              </button>
+              <button onClick={() => window.confirm("Sign " + (r.name || r.phone) + " out of all devices?") && write(r.phone, { token: null })}
+                style={{ background: "#f0ece1", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+                Sign out
+              </button>
+              <button onClick={async () => {
+                  if (!window.confirm("Remove " + (r.name || r.phone) + " completely?")) return;
+                  await fetch(url + "/" + r.phone + ".json", { method: "DELETE" }); load();
+                }}
+                style={{ background: "#fbe9e7", color: BRAND.danger, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+                Remove
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
 }
 
 function Customers({ orders }) {
