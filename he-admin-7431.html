@@ -363,7 +363,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v3.7</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v3.8</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -562,7 +562,9 @@ function printDeliverySheet(list, brand) {
     "<td>" + (i + 1) + "</td>" +
     "<td><b>" + o.id + "</b><div class='s'>" + (o.slotLabel || "") + "</div></td>" +
     "<td><b>" + (o.name || "") + "</b><div class='s'>" + (o.phone || "") + "</div></td>" +
-    "<td class='ad'>" + (o.address || "") + (o.pincode ? " - " + o.pincode : "") + (o.rider ? "<div class='s'>Rider: " + o.rider + "</div>" : "") + "</td>" +
+    "<td class='ad'>" + (o.address || "") + (o.pincode ? " - " + o.pincode : "") +
+      (o.mode === "ship" ? "<div class='s'><b>COURIER \u2014 ALL INDIA</b></div>" : "") +
+      (o.rider ? "<div class='s'>Rider: " + o.rider + "</div>" : "") + "</td>" +
     "<td class='it'>" + (o.items || []).map((x) => x.qty + "× " + x.name).join("<br>") + "</td>" +
     "<td class='amt'><b>" + rup(o.total) + "</b><div class='s'>" + (o.pay === "cod" ? "CASH" : "UPI") + "</div></td>" +
     "<td class='tick'>&#9744;</td>" +
@@ -1468,7 +1470,7 @@ function CatManager({ cats, products, onSave, close }) {
     if (window.confirm(`Delete category "${c.name}"?`)) setList(list.filter((_, j) => j !== i));
   };
   const saveAll = () => {
-    const clean = list.filter((c) => (c.name || "").trim()).map((c) => ({ id: c.id, name: c.name.trim(), ta: (c.ta || "").trim(), icon: (c.icon || "🍽️").trim() }));
+    const clean = list.filter((c) => (c.name || "").trim()).map((c) => ({ id: c.id, name: c.name.trim(), ta: (c.ta || "").trim(), icon: (c.icon || "🍽️").trim(), zoneFree: !!c.zoneFree }));
     if (!clean.length) return alert("Keep at least one category.");
     onSave(clean);
   };
@@ -1476,7 +1478,11 @@ function CatManager({ cats, products, onSave, close }) {
   return (
     <Modal close={close}>
       <h3 className="display" style={{ fontWeight: 800, margin: "0 0 4px" }}>Manage categories</h3>
-      <p style={{ fontSize: 12.5, color: "#6b675e", margin: "0 0 12px" }}>Rename freely — items stay linked. Use ▲▼ to set the order customers see on the store.</p>
+      <p style={{ fontSize: 12.5, color: "#6b675e", margin: "0 0 12px" }}>
+        Rename freely — items stay linked. Use ▲▼ to set the order customers see on the store.
+        Tick <b>Delivers all over India</b> on a category of shelf-stable items (pickles, podi, masala, dry fish).
+        Customers outside your delivery zone can order from those categories only — fresh meat stays local.
+      </p>
       <div style={{ display: "grid", gap: 8 }}>
         {list.map((c, i) => (
           <div key={c.id} style={{ display: "flex", gap: 6, alignItems: "center", background: "#FBF7EF", borderRadius: 10, padding: 8 }}>
@@ -1487,6 +1493,10 @@ function CatManager({ cats, products, onSave, close }) {
                 style={{ ...inp, padding: "7px 10px", fontSize: 13, fontWeight: 700 }} />
               <input value={c.ta || ""} onChange={(e) => upd(i, { ta: e.target.value })} placeholder="Tamil name (optional)"
                 style={{ ...inp, padding: "7px 10px", fontSize: 12.5 }} />
+              <label style={{ display: "flex", gap: 7, alignItems: "center", fontSize: 12, fontWeight: 700, cursor: "pointer", color: c.zoneFree ? BRAND.ok : "#6b675e" }}>
+                <input type="checkbox" checked={!!c.zoneFree} onChange={() => upd(i, { zoneFree: !c.zoneFree })} />
+                📦 Delivers all over India (outside our zone too)
+              </label>
             </div>
             <div style={{ display: "grid", gap: 3 }}>
               <button onClick={() => move(i, -1)} style={btn}>▲</button>
@@ -1550,7 +1560,9 @@ function Menu({ products, save, cats, saveCats }) {
             </div>
             <div style={{ flex: 1, minWidth: 160 }}>
               <div style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</div>
-              <div style={{ fontSize: 12, color: "#8a857a" }}>{(cats.find((c) => c.id === p.cat) || {}).name || p.cat} · {rup(p.price)} <s style={{ opacity: .6 }}>{rup(p.mrp)}</s> {p.img ? "· 📷 photo set" : "· no photo"}</div>
+              <div style={{ fontSize: 12, color: "#8a857a" }}>
+                {(cats.find((c) => c.id === p.cat) || {}).name || p.cat}
+                {(cats.find((c) => c.id === p.cat) || {}).zoneFree ? <span style={{ color: BRAND.ok, fontWeight: 700 }}> · 📦 All India</span> : null} · {rup(p.price)} <s style={{ opacity: .6 }}>{rup(p.mrp)}</s> {p.img ? "· 📷 photo set" : "· no photo"}</div>
             </div>
             <label style={{ fontSize: 12, fontWeight: 600, display: "flex", gap: 5, alignItems: "center", cursor: "pointer" }}>
               <input type="checkbox" checked={p.stock} onChange={() => save(products.map((x) => x.id === p.id ? { ...x, stock: !x.stock } : x))} /> In stock
