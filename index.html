@@ -15,6 +15,22 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <script>
 if ("serviceWorker" in navigator) { navigator.serviceWorker.register("./sw.js").catch(function(){}); }
+
+/* ===================== LUCKY ORANGE (session recordings + heatmaps) =====================
+   1. Sign up at luckyorange.com and add this website
+   2. Settings -> Tracking Code: find the number in site-id=XXXXXXXX
+   This site is already configured (site-id 826a0b10).
+   To point it at a different Lucky Orange account, change LO_SITE_ID below.
+   Customer name / phone / address are masked at checkout via the lo-sensitive class.
+======================================================================================== */
+(function () {
+  var LO_SITE_ID = "826a0b10";
+  if (!LO_SITE_ID || LO_SITE_ID === "PASTE_YOUR_SITE_ID") return;   // not configured yet
+  var s = document.createElement("script");
+  s.async = true; s.defer = true;
+  s.src = "https://tools.luckyorange.com/core/lo.js?site-id=" + LO_SITE_ID;
+  document.head.appendChild(s);
+})();
 </script>
 <!-- React + Babel (compiles the app right in the browser — no build tools needed) -->
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
@@ -1259,7 +1275,7 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
           Fields marked <span style={{ color: "#D33", fontWeight: 800 }}>*</span> are required — we'll remember them for next time
         </div>
       )}
-      <div style={{ display: "grid", gap: 12, marginBottom: 18 }}>
+      <div className="lo-sensitive" style={{ display: "grid", gap: 12, marginBottom: 18 }}>
         <label style={fieldLbl}>
           <span>Full name<Req /></span>
           <input placeholder="Your name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={inp} />
