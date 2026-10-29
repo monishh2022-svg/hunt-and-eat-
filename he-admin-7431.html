@@ -363,7 +363,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v4.6</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v4.8</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -866,6 +866,8 @@ function ZoneEditor({ zones, onSave, close }) {
       <p style={{ fontSize: 12.5, color: "#6b675e", margin: "0 0 8px" }}>
         Draw your area street by street, or use a simple radius circle. Orders are accepted only inside these shapes.
       </p>
+
+      {isP && <ZoneTools map={mapRef.current} points={cur.points || []} onPoints={(pts) => upd(sel, { points: pts })} />}
 
       {isP && (
         <div style={{ background: drawing ? "#FDF0EE" : "#F6F2E8", border: "1.5px solid " + (drawing ? BRAND.red : "#E5DFD0"), borderRadius: 10, padding: "9px 12px", marginBottom: 8, fontSize: 12.5, fontWeight: 700 }}>
@@ -2044,6 +2046,8 @@ function BannerRow({ b, i, total, cats, products, onChange, onMove, onDelete }) 
   const [busy, setBusy] = useState(false);
   const set = (k, v) => onChange({ ...b, [k]: v });
 
+  const [busyM, setBusyM] = useState(false);
+
   const pick = async (e) => {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
@@ -2054,6 +2058,16 @@ function BannerRow({ b, i, total, cats, products, onChange, onMove, onDelete }) 
       onChange({ ...b, img });
     } catch (err) { alert("Could not read that image. Try a JPG or PNG."); }
     setBusy(false);
+    e.target.value = "";
+  };
+
+  const pickM = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    setBusyM(true);
+    try { onChange({ ...b, imgM: await compressImage(f, 820, 0.76) }); }
+    catch (err) { alert("Could not read that image. Try a JPG or PNG."); }
+    setBusyM(false);
     e.target.value = "";
   };
 
@@ -2093,7 +2107,32 @@ function BannerRow({ b, i, total, cats, products, onChange, onMove, onDelete }) 
             </button>
           )}
           <div style={{ fontSize: 11.5, color: "#8a857a", marginTop: 7, lineHeight: 1.55 }}>
-            Best size <b>1060 × 300</b> (wide strip). A poster replaces the headline and price design completely.
+            Computer size: <b>1600 × 404</b> (or any 4:1 strip). A poster replaces the headline and price design completely.
+          </div>
+
+          <div style={{ marginTop: 12, paddingTop: 11, borderTop: "1px dashed #EADFC6" }}>
+            <div style={{ display: "flex", gap: 11, alignItems: "flex-start", flexWrap: "wrap" }}>
+              <div style={{ width: 104, height: 59, borderRadius: 9, overflow: "hidden", background: "#F6EADB", display: "grid", placeItems: "center", flex: "0 0 auto", border: "1px solid #EADFC6" }}>
+                {b.imgM ? <img src={b.imgM} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        : <span style={{ fontSize: 10.5, color: "#a39e93", textAlign: "center", padding: 4 }}>No phone version</span>}
+              </div>
+              <div style={{ flex: "1 1 220px", minWidth: 200 }}>
+                <label style={{ display: "inline-block", background: "#fff", border: "1.5px solid #A6212E", color: "#A6212E", borderRadius: 9, padding: "8px 14px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
+                  {busyM ? "Uploading…" : b.imgM ? "Replace phone poster" : "📱 Add a phone poster"}
+                  <input type="file" accept="image/*" onChange={pickM} style={{ display: "none" }} />
+                </label>
+                {b.imgM && (
+                  <button onClick={() => set("imgM", "")}
+                    style={{ marginLeft: 8, border: "1px solid #EADFC6", background: "#FFFDF6", borderRadius: 9, padding: "8px 13px", fontSize: 12.5, cursor: "pointer" }}>
+                    Remove
+                  </button>
+                )}
+                <div style={{ fontSize: 11.5, color: "#8a857a", marginTop: 7, lineHeight: 1.55 }}>
+                  Phone size: <b>820 × 461</b> (16:9). Without one, phones show only the <b>middle 45%</b> of the wide
+                  poster — anything at the left or right edge is cut off. Most of your customers are on a phone.
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -2209,6 +2248,128 @@ function BannersTab({ settings, cats, products, save }) {
           })}
           onDelete={() => edit((L) => L.filter((x, k) => k !== i))} />
       ))}
+    </div>
+  );
+}
+
+/* =====================================================================
+   Find a village on the map while tracing a zone, and move points in
+   and out as text. Search runs in YOUR browser against the free Photon
+   service — no key, nothing stored.
+===================================================================== */
+function ZoneTools({ map, points, onPoints }) {
+  const [q, setQ] = useState("");
+  const [hits, setHits] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [io, setIo] = useState(false);
+  const [text, setText] = useState("");
+
+  const search = async () => {
+    const term = q.trim();
+    if (!term) return;
+    setBusy(true); setMsg(""); setHits(null);
+    const c = map ? map.getCenter() : { lat: 12.99, lng: 80.09 };
+    try {
+      const url = "https://photon.komoot.io/api/?limit=6&lang=en&lat=" + c.lat + "&lon=" + c.lng +
+        "&q=" + encodeURIComponent(term + ", Tamil Nadu, India");
+      const r = await fetch(url);
+      if (!r.ok) throw new Error("bad response");
+      const j = await r.json();
+      const out = (j.features || []).map((f) => {
+        const p = f.properties || {};
+        return {
+          label: [p.name, p.district || p.county, p.state].filter(Boolean).join(", "),
+          lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0],
+        };
+      });
+      setHits(out);
+      if (!out.length) setMsg("Nothing found. Try adding the district — e.g. \"Somangalam Kancheepuram\".");
+    } catch (e) {
+      setMsg("Couldn't reach the place search just now. You can still tap the map to place points.");
+    }
+    setBusy(false);
+  };
+
+  const jump = (h) => {
+    if (!map) return;
+    map.setView([h.lat, h.lng], 15);
+    try {
+      if (window.__zoneMark) map.removeLayer(window.__zoneMark);
+      window.__zoneMark = L.circleMarker([h.lat, h.lng], { radius: 9, color: "#8E6A1F", weight: 3, fillColor: "#F3D489", fillOpacity: .85 })
+        .addTo(map).bindTooltip(h.label, { permanent: false });
+    } catch (e) {}
+    setMsg("Centred on " + h.label + " — now tap the map where the boundary runs.");
+  };
+
+  const openIo = () => {
+    setText(JSON.stringify(points || [], null, 0));
+    setIo(!io); setMsg("");
+  };
+
+  const apply = () => {
+    try {
+      const v = JSON.parse(text);
+      if (!Array.isArray(v) || !v.length) throw new Error("not a list");
+      const clean = v.map((p) => {
+        const lat = Number(p.lat), lng = Number(p.lng);
+        if (!isFinite(lat) || !isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) throw new Error("bad point");
+        return { lat: lat, lng: lng };
+      });
+      onPoints(clean);
+      setMsg("Loaded " + clean.length + " points. Drag any of them to adjust, then save.");
+      setIo(false);
+    } catch (e) {
+      setMsg("That doesn't look like a list of points. It should read like [{\"lat\":12.99,\"lng\":80.09}, …]");
+    }
+  };
+
+  const fld = { ...inp, padding: "8px 10px", fontSize: 13 };
+  return (
+    <div style={{ background: "#FBF7EF", border: "1px solid #E5DFD0", borderRadius: 10, padding: 10, marginBottom: 8 }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()}
+          placeholder="Find a village — e.g. Somangalam, Sikkarayapuram…" style={{ ...fld, flex: "1 1 220px", minWidth: 0 }} />
+        <button onClick={search} disabled={busy}
+          style={{ background: BRAND.red, color: "#fff", border: "none", borderRadius: 8, padding: "8px 15px", fontWeight: 800, fontSize: 12.5, cursor: busy ? "wait" : "pointer" }}>
+          {busy ? "…" : "🔍 Find"}
+        </button>
+        <button onClick={openIo}
+          style={{ background: "#fff", border: "1px solid #E5DFD0", borderRadius: 8, padding: "8px 13px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
+          {io ? "Close" : "⧉ Points as text"}
+        </button>
+      </div>
+
+      {hits && hits.length > 0 && (
+        <div style={{ display: "grid", gap: 4, marginTop: 8 }}>
+          {hits.map((h, i) => (
+            <button key={i} onClick={() => jump(h)}
+              style={{ textAlign: "left", background: "#fff", border: "1px solid #EDE7DA", borderRadius: 8, padding: "7px 11px", fontSize: 12.5, cursor: "pointer" }}>
+              📍 {h.label}
+              <span style={{ color: "#a39e93", marginLeft: 6 }}>{h.lat.toFixed(4)}, {h.lng.toFixed(4)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {io && (
+        <div style={{ marginTop: 8 }}>
+          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4}
+            style={{ ...fld, width: "100%", fontFamily: "monospace", fontSize: 11.5, resize: "vertical", boxSizing: "border-box" }} />
+          <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+            <button onClick={apply} style={{ background: BRAND.ok, color: "#fff", border: "none", borderRadius: 8, padding: "7px 13px", fontWeight: 800, fontSize: 12, cursor: "pointer" }}>
+              Load these points
+            </button>
+            <button onClick={() => { try { navigator.clipboard.writeText(text); setMsg("Copied — keep it somewhere safe as a backup."); } catch (e) { setMsg("Select the text above and copy it."); } }}
+              style={{ background: "#f0ece1", border: "none", borderRadius: 8, padding: "7px 13px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+              Copy
+            </button>
+            <span style={{ fontSize: 11.5, color: "#8a857a", alignSelf: "center" }}>Copy this to back a zone up, or paste one in.</span>
+          </div>
+        </div>
+      )}
+
+      {msg && <div style={{ fontSize: 12, color: "#6b675e", marginTop: 7, lineHeight: 1.5 }}>{msg}</div>}
     </div>
   );
 }
