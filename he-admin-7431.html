@@ -353,7 +353,7 @@ function AdminApp() {
   const revenue = active.filter((o) => o.status === "Delivered").reduce((s, o) => s + o.total, 0);
   const todayRevenue = todays.reduce((s, o) => s + o.total, 0);
 
-  const tabs = [["dash", "📊 Dashboard"], ["orders", `📦 Orders${newOrders ? ` (+${newOrders} new)` : ""}`], ["menu", "🍗 Menu"], ["customers", "👥 Customers"], ["visits", "📈 Visitors"], ["sessions", "🎥 Sessions"], ["demand", "📍 Demand map"], ["riders", "🛵 Riders"], ["cash", "💰 Cash"], ["slots", "🕐 Slots"], ["settings", "⚙️ Settings"]];
+  const tabs = [["dash", "📊 Dashboard"], ["orders", `📦 Orders${newOrders ? ` (+${newOrders} new)` : ""}`], ["menu", "🍗 Menu"], ["banners", "🖼️ Banners"], ["customers", "👥 Customers"], ["visits", "📈 Visitors"], ["sessions", "🎥 Sessions"], ["demand", "📍 Demand map"], ["riders", "🛵 Riders"], ["cash", "💰 Cash"], ["slots", "🕐 Slots"], ["settings", "⚙️ Settings"]];
 
   return (
     <Shell>
@@ -363,7 +363,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v4.0</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v4.2</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -451,6 +451,7 @@ function AdminApp() {
         )}
         {tab === "orders" && <Orders orders={orders} saveOrders={saveOrders} />}
         {tab === "menu" && <Menu products={products} cats={categories} save={(p) => saveCore({ products: p })} saveCats={(c) => saveCore({ categories: c })} />}
+        {tab === "banners" && <BannersTab settings={settings} cats={categories} save={(s) => saveCore({ settings: s })} />}
         {tab === "customers" && <Customers orders={orders} />}
         {tab === "visits" && <Visitors orders={orders} />}
         {tab === "sessions" && <Sessions />}
@@ -565,7 +566,7 @@ function printDeliverySheet(list, brand) {
     "<td><b>" + o.id + "</b><div class='s'>" + (o.slotLabel || "") + "</div></td>" +
     "<td><b>" + (o.name || "") + "</b><div class='s'>" + (o.phone || "") + "</div></td>" +
     "<td class='ad'>" + (o.address || "") + (o.pincode ? " - " + o.pincode : "") +
-      (o.mode === "ship" ? "<div class='s'><b>COURIER \u2014 ALL INDIA</b></div>" : "") +
+      (o.mode === "ship" ? "<div class='s'><b>COURIER — ALL INDIA</b></div>" : "") +
       (o.rider ? "<div class='s'>Rider: " + o.rider + "</div>" : "") + "</td>" +
     "<td class='it'>" + (o.items || []).map((x) => x.qty + "× " + x.name).join("<br>") + "</td>" +
     "<td class='amt'><b>" + rup(o.total) + "</b><div class='s'>" + (o.pay === "cod" ? "CASH" : "UPI") + "</div></td>" +
@@ -1081,7 +1082,7 @@ function Visitors({ orders }) {
 function downloadCSV(filename, rows) {
   const esc = (v) => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
   const csv = rows.map((r) => r.map(esc).join(",")).join("\n");
-  const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob); a.download = filename; document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
@@ -1727,6 +1728,179 @@ function Cash({ orders, saveOrders }) {
         })}
       </div>
     </>
+  );
+}
+
+/* =====================================================================
+   BANNERS — the rotating strip across the top of the shop.
+   A banner is either an uploaded poster image, or a designed panel
+   built from the headline / price fields below.
+===================================================================== */
+const BANNER_THEMES = [["red", "Red"], ["dark", "Dark roast"], ["green", "Green"], ["cream", "Cream"]];
+
+function AField({ label, v, on, ph }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11.5, fontWeight: 700, color: "#6b675e", marginBottom: 4 }}>{label}</div>
+      <input value={v || ""} onChange={(e) => on(e.target.value)} placeholder={ph || ""}
+        style={{ width: "100%", padding: "9px 10px", borderRadius: 9, border: "1.5px solid #e5dfd0", fontSize: 13.5, boxSizing: "border-box" }} />
+    </div>
+  );
+}
+
+function BannerRow({ b, i, total, cats, onChange, onMove, onDelete }) {
+  const [busy, setBusy] = useState(false);
+  const set = (k, v) => onChange({ ...b, [k]: v });
+
+  const pick = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    setBusy(true);
+    try {
+      // banners are wide, so they get a larger max width than product photos
+      const img = await compressImage(f, 1280, 0.76);
+      onChange({ ...b, img });
+    } catch (err) { alert("Could not read that image. Try a JPG or PNG."); }
+    setBusy(false);
+    e.target.value = "";
+  };
+
+  return (
+    <div style={{ background: "#fff", border: "1px solid #EADFC6", borderRadius: 14, padding: 16, marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+        <b style={{ fontSize: 14 }}>Banner {i + 1}</b>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: b.off ? "#a39e93" : "#1D6B3F" }}>
+          <input type="checkbox" checked={!b.off} onChange={(e) => set("off", !e.target.checked)} />
+          {b.off ? "Hidden" : "Showing"}
+        </label>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+          <button onClick={() => onMove(-1)} disabled={i === 0} title="Move up"
+            style={{ border: "1px solid #EADFC6", background: "#FFFDF6", borderRadius: 8, padding: "6px 11px", cursor: i === 0 ? "not-allowed" : "pointer", opacity: i === 0 ? .4 : 1 }}>↑</button>
+          <button onClick={() => onMove(1)} disabled={i === total - 1} title="Move down"
+            style={{ border: "1px solid #EADFC6", background: "#FFFDF6", borderRadius: 8, padding: "6px 11px", cursor: i === total - 1 ? "not-allowed" : "pointer", opacity: i === total - 1 ? .4 : 1 }}>↓</button>
+          <button onClick={() => window.confirm("Delete this banner?") && onDelete()}
+            style={{ border: "1px solid #F0C0BA", background: "#FBE9E7", color: "#A6212E", borderRadius: 8, padding: "6px 11px", cursor: "pointer", fontWeight: 700 }}>Delete</button>
+        </div>
+      </div>
+
+      {/* ---- poster image ---- */}
+      <div style={{ display: "flex", gap: 14, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 14 }}>
+        <div style={{ width: 230, height: 66, borderRadius: 10, overflow: "hidden", background: "#F6EADB", display: "grid", placeItems: "center", flex: "0 0 auto", border: "1px solid #EADFC6" }}>
+          {b.img ? <img src={b.img} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                 : <span style={{ fontSize: 11.5, color: "#a39e93" }}>No poster — using the design below</span>}
+        </div>
+        <div style={{ flex: "1 1 240px", minWidth: 220 }}>
+          <label style={{ display: "inline-block", background: "#A6212E", color: "#fff", borderRadius: 9, padding: "9px 16px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
+            {busy ? "Uploading…" : b.img ? "Replace poster" : "Upload poster"}
+            <input type="file" accept="image/*" onChange={pick} style={{ display: "none" }} />
+          </label>
+          {b.img && (
+            <button onClick={() => set("img", "")}
+              style={{ marginLeft: 8, border: "1px solid #EADFC6", background: "#FFFDF6", borderRadius: 9, padding: "9px 14px", fontSize: 12.5, cursor: "pointer" }}>
+              Remove poster
+            </button>
+          )}
+          <div style={{ fontSize: 11.5, color: "#8a857a", marginTop: 7, lineHeight: 1.55 }}>
+            Best size <b>1060 × 300</b> (wide strip). A poster replaces the headline and price design completely.
+          </div>
+        </div>
+      </div>
+
+      {/* ---- designed panel (used when there's no poster) ---- */}
+      <div style={{ opacity: b.img ? .45 : 1, pointerEvents: b.img ? "none" : "auto" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))", gap: 10 }}>
+          <AField label="Small line above" v={b.kicker} on={(v) => set("kicker", v)} ph="THIS FESTIVE SEASON, GO FRESH." />
+          <AField label="Headline" v={b.title} on={(v) => set("title", v)} ph="SWITCH TO HUNT & EAT." />
+          <AField label="Supporting line" v={b.sub} on={(v) => set("sub", v)} ph="Cut only after you order" />
+          <AField label="Button text" v={b.cta} on={(v) => set("cta", v)} ph="Order now" />
+          <AField label="Price badge label" v={b.tag} on={(v) => set("tag", v)} ph="WHOLE BIRD" />
+          <AField label="Price (₹)" v={b.price} on={(v) => set("price", v)} ph="650" />
+          <AField label="Struck-out price (₹)" v={b.was} on={(v) => set("was", v)} ph="720" />
+          <AField label="Under the price" v={b.unit} on={(v) => set("unit", v)} ph="per bird" />
+          <AField label="Faded emoji" v={b.emoji} on={(v) => set("emoji", v)} ph="🐓" />
+          <div>
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: "#6b675e", marginBottom: 4 }}>Colour</div>
+            <select value={b.theme || "red"} onChange={(e) => set("theme", e.target.value)}
+              style={{ width: "100%", padding: "9px 10px", borderRadius: 9, border: "1.5px solid #e5dfd0", fontSize: 13.5, boxSizing: "border-box", background: "#fff" }}>
+              {BANNER_THEMES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* ---- where it goes when tapped ---- */}
+      <div style={{ marginTop: 12 }}>
+        <div style={{ fontSize: 11.5, fontWeight: 700, color: "#6b675e", marginBottom: 4 }}>When a customer taps this banner</div>
+        <select value={b.link || ""} onChange={(e) => set("link", e.target.value)}
+          style={{ width: "100%", maxWidth: 420, padding: "9px 10px", borderRadius: 9, border: "1.5px solid #e5dfd0", fontSize: 13.5, boxSizing: "border-box", background: "#fff" }}>
+          <option value="">Nothing — just show it</option>
+          <option value="#menu">Jump to the menu</option>
+          {(cats || []).map((c) => <option key={c.id} value={"cat:" + c.id}>Open the "{c.name}" category</option>)}
+        </select>
+      </div>
+    </div>
+  );
+}
+
+function BannersTab({ settings, cats, save }) {
+  const [list, setList] = useState(() => (settings.banners || []).map((b) => ({ ...b })));
+  const [dirty, setDirty] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const edit = (fn) => { setList(fn); setDirty(true); setSaved(false); };
+
+  const add = () => edit((L) => L.concat([{
+    id: "b" + Date.now().toString(36), theme: "red", kicker: "", title: "New offer",
+    sub: "", cta: "Order now", tag: "", price: "", was: "", unit: "", emoji: "🐓", link: "#menu",
+  }]));
+
+  const commit = async () => {
+    await save({ ...settings, banners: list });
+    setDirty(false); setSaved(true);
+    setTimeout(() => setSaved(false), 2600);
+  };
+
+  const live = list.filter((b) => !b.off).length;
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 6 }}>
+        <h2 style={{ margin: 0, fontSize: 19 }}>Top banners</h2>
+        <span style={{ fontSize: 12.5, color: "#8a857a" }}>{live} showing on the website</span>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+          {saved && <span style={{ color: "#1D6B3F", fontWeight: 700, fontSize: 12.5 }}>✓ Published</span>}
+          <button onClick={add} style={{ border: "1px solid #EADFC6", background: "#FFFDF6", borderRadius: 9, padding: "10px 16px", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+            + Add banner
+          </button>
+          <button onClick={commit} disabled={!dirty}
+            style={{ border: "none", background: dirty ? "#A6212E" : "#CFC9BD", color: "#fff", borderRadius: 9, padding: "10px 20px", fontWeight: 800, fontSize: 13, cursor: dirty ? "pointer" : "not-allowed" }}>
+            {dirty ? "Publish changes" : "Published"}
+          </button>
+        </div>
+      </div>
+      <p style={{ fontSize: 13, color: "#6b675e", margin: "0 0 16px", lineHeight: 1.6, maxWidth: 740 }}>
+        These rotate automatically across the top of the shop, about one every 5 seconds. Customers can also swipe
+        or use the arrows. Nothing is live until you press <b>Publish changes</b>.
+      </p>
+
+      {list.length === 0 && (
+        <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 12, padding: "16px 18px", fontSize: 13.5, lineHeight: 1.6 }}>
+          No banners of your own yet, so the shop is showing the three built-in ones.
+          Add a banner here and it replaces them — so add every banner you want before publishing.
+        </div>
+      )}
+
+      {list.map((b, i) => (
+        <BannerRow key={b.id} b={b} i={i} total={list.length} cats={cats}
+          onChange={(nb) => edit((L) => L.map((x, k) => (k === i ? nb : x)))}
+          onMove={(d) => edit((L) => {
+            const n = L.slice(); const j = i + d;
+            if (j < 0 || j >= n.length) return n;
+            const tmp = n[i]; n[i] = n[j]; n[j] = tmp; return n;
+          })}
+          onDelete={() => edit((L) => L.filter((x, k) => k !== i))} />
+      ))}
+    </div>
   );
 }
 
