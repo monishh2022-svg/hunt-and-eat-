@@ -363,7 +363,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v4.4</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v4.6</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -451,7 +451,7 @@ function AdminApp() {
         )}
         {tab === "orders" && <Orders orders={orders} saveOrders={saveOrders} />}
         {tab === "menu" && <Menu products={products} cats={categories} save={(p) => saveCore({ products: p })} saveCats={(c) => saveCore({ categories: c })} />}
-        {tab === "banners" && <BannersTab settings={settings} cats={categories} save={(s) => saveCore({ settings: s })} />}
+        {tab === "banners" && <BannersTab settings={settings} cats={categories} products={products} save={(s) => saveCore({ settings: s })} />}
         {tab === "customers" && <Customers orders={orders} />}
         {tab === "visits" && <Visitors orders={orders} />}
         {tab === "sessions" && <Sessions />}
@@ -944,93 +944,225 @@ const FUNNEL = [
 ];
 
 function Visitors({ orders }) {
-  const [data, setData] = useState(null);
-  const [funnel, setFunnel] = useState(null);
-  const [busy, setBusy] = useState(false);
   const dbUrl = (typeof FIREBASE_RTDB_URL !== "undefined" && FIREBASE_RTDB_URL) ? FIREBASE_RTDB_URL.replace(/\/+$/, "") : null;
+  const [preset, setPreset] = useState("7");
+  const [from, setFrom] = useState(shiftKey(-29));
+  const [to, setTo] = useState(dkey(new Date()));
+  const [data, setData] = useState(null);        // [{date, visits, uniq, refs}]
+  const [funnel, setFunnel] = useState(null);
+  const [stepsByDay, setStepsByDay] = useState({});
+  const [uniqAll, setUniqAll] = useState(0);     // devices counted once across the whole range
+  const [busy, setBusy] = useState(false);
+  const [prog, setProg] = useState(null);
+
+  const today = dkey(new Date());
+  const span = preset === "custom" ? { from: from, to: to } : { from: shiftKey(-(Number(preset) - 1)), to: today };
+  const keys = dayList(span.from, span.to);
+  const askedDays = (preset === "custom" && from && to && new Date(to) >= new Date(from))
+    ? Math.round((new Date(to + "T00:00:00") - new Date(from + "T00:00:00")) / 86400000) + 1 : 0;
+  const capped = askedDays > keys.length && keys.length > 0;
+  const backwards = preset === "custom" && from && to && new Date(to) < new Date(from);
 
   const load = async () => {
     if (!dbUrl) { setData("nodb"); return; }
-    setBusy(true);
-    const days = [];
-    for (let i = 6; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); days.push(dkey(d)); }
-    const out = [];
-    for (const d of days) {
-      try {
-        const r = await fetch(dbUrl + "/" + VISIT_NS + "/visits/" + d + ".json");
-        const j = r.ok ? await r.json() : null;
-        const rows = j ? Object.keys(j).map((k) => j[k]) : [];
-        const seen = {}; rows.forEach((x) => { if (x && x.v) seen[x.v] = 1; });
-        out.push({ date: d, visits: rows.length, uniq: Object.keys(seen).length, refs: rows.map((x) => (x && x.r) || "direct") });
-      } catch { out.push({ date: d, visits: 0, uniq: 0, refs: [] }); }
-    }
-    // funnel: unique visitors who reached each step
-    const steps = {};
-    FUNNEL.forEach(([k]) => { steps[k] = {}; });
-    for (const d of days) {
-      try {
-        const r = await fetch(dbUrl + "/" + VISIT_NS + "/events/" + d + ".json");
-        const j = r.ok ? await r.json() : null;
-        if (j) Object.keys(j).forEach((k) => { const e = j[k]; if (e && e.s && steps[e.s]) steps[e.s][e.v] = 1; });
-      } catch {}
-    }
-    setFunnel(FUNNEL.map(([k, label, icon]) => ({ k, label, icon, n: Object.keys(steps[k]).length })));
-    setData(out); setBusy(false);
+    if (!keys.length) { setData([]); setFunnel(null); setStepsByDay({}); setUniqAll(0); return; }
+    setBusy(true); setProg([0, keys.length * 2]);
+
+    const visitsByDay = await fetchDays(dbUrl, VISIT_NS, keys, (d, n) => setProg([d, n * 2]), "visits");
+    const eventsByDay = await fetchDays(dbUrl, VISIT_NS, keys, (d, n) => setProg([n + d, n * 2]), "events");
+
+    const everyDevice = {};
+    const out = keys.map((k) => {
+      const j = visitsByDay[k] || {};
+      const rows = Object.keys(j).map((x) => j[x]);
+      const seen = {};
+      rows.forEach((x) => { if (x && x.v) { seen[x.v] = 1; everyDevice[x.v] = 1; } });
+      return { date: k, visits: rows.length, uniq: Object.keys(seen).length, refs: rows.map((x) => (x && x.r) || "direct") };
+    });
+
+    // funnel: a device counts once per step, both for the day and for the whole range
+    const totals = {}; FUNNEL.forEach(([s]) => { totals[s] = {}; });
+    const perDay = {};
+    keys.forEach((k) => {
+      const j = eventsByDay[k] || {};
+      const day = {}; FUNNEL.forEach(([s]) => { day[s] = {}; });
+      Object.keys(j).forEach((id) => {
+        const e = j[id];
+        if (e && e.s && day[e.s]) { day[e.s][e.v] = 1; totals[e.s][e.v] = 1; }
+      });
+      const counted = {}; FUNNEL.forEach(([s]) => { counted[s] = Object.keys(day[s]).length; });
+      perDay[k] = counted;
+    });
+
+    setStepsByDay(perDay);
+    setUniqAll(Object.keys(everyDevice).length);
+    setFunnel(FUNNEL.map(([k, label, icon]) => ({ k: k, label: label, icon: icon, n: Object.keys(totals[k]).length })));
+    setData(out); setProg(null); setBusy(false);
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [preset, preset === "custom" ? from + "|" + to : ""]);
 
   if (data === "nodb") return <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 10, padding: 14, fontSize: 13.5 }}>Visitor tracking needs the database connected (FIREBASE_RTDB_URL).</div>;
   if (!data) return <div style={{ color: "#8a857a", padding: 20 }}>Loading visitor data…</div>;
 
-  const today = data[data.length - 1] || { visits: 0, uniq: 0 };
-  const week = data.reduce((s, d) => s + d.visits, 0);
-  const weekU = (() => { const all = {}; data.forEach((d) => d.refs.forEach(() => {})); return data.reduce((s, d) => s + d.uniq, 0); })();
   const ordersOn = (d) => orders.filter((o) => (o.placedAt || "").slice(0, 10) === d && o.status !== "Cancelled").length;
-  const todayOrders = ordersOn(today.date);
-  const conv = today.visits ? Math.round((todayOrders / today.visits) * 100) : 0;
-  const max = Math.max.apply(null, data.map((d) => d.visits).concat([1]));
+  const totalVisits = data.reduce((s, d) => s + d.visits, 0);
+  const totalOrders = data.reduce((s, d) => s + ordersOn(d.date), 0);
+  const conv = totalVisits ? Math.round((totalOrders / totalVisits) * 100) : 0;
+  const daysWithVisits = data.filter((d) => d.visits > 0).length;
+  const best = data.reduce((a, d) => (d.visits > (a ? a.visits : -1) ? d : a), null);
+  const shortDay = (k) => new Date(k + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+
+  /* a year of daily bars is unreadable, so long ranges roll up into weeks or months */
+  const grouped = (() => {
+    if (data.length <= 31) return { size: 1, bars: data.map((d) => ({ label: shortDay(d.date), visits: d.visits, orders: ordersOn(d.date), uniq: d.uniq, tip: d.date })) };
+    const size = data.length <= 182 ? 7 : 30;
+    const bars = [];
+    for (let i = 0; i < data.length; i += size) {
+      const chunk = data.slice(i, i + size);
+      bars.push({
+        label: shortDay(chunk[0].date),
+        visits: chunk.reduce((s, d) => s + d.visits, 0),
+        uniq: chunk.reduce((s, d) => s + d.uniq, 0),
+        orders: chunk.reduce((s, d) => s + ordersOn(d.date), 0),
+        tip: chunk[0].date + " to " + chunk[chunk.length - 1].date,
+      });
+    }
+    return { size: size, bars: bars };
+  })();
+  const max = Math.max.apply(null, grouped.bars.map((b) => b.visits).concat([1]));
 
   const refCount = {};
   data.forEach((d) => d.refs.forEach((r) => {
     let host = "Direct / WhatsApp";
-    try { if (r && r !== "direct") host = new URL(r).hostname.replace("www.", ""); } catch {}
+    try { if (r && r !== "direct") host = new URL(r).hostname.replace("www.", ""); } catch (e) {}
     refCount[host] = (refCount[host] || 0) + 1;
   }));
-  const refs = Object.keys(refCount).sort((a, b) => refCount[b] - refCount[a]).slice(0, 6);
+  const refsAll = Object.keys(refCount).sort((a, b) => refCount[b] - refCount[a]);
+  const refs = refsAll.slice(0, 6);
+
+  const exportDaily = () => {
+    const head = ["Date", "Day", "Visits", "Unique devices", "Orders", "Conversion %"].concat(FUNNEL.map((f) => f[1]));
+    const out = [head];
+    const tot = { visits: 0, uniq: 0, orders: 0 };
+    const totSteps = {}; FUNNEL.forEach((f) => { totSteps[f[0]] = 0; });
+    data.forEach((d) => {
+      const o = ordersOn(d.date);
+      const st = stepsByDay[d.date] || {};
+      const wd = new Date(d.date + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short" });
+      out.push([d.date, wd, d.visits, d.uniq, o, d.visits ? Math.round((o / d.visits) * 100) : 0]
+        .concat(FUNNEL.map((f) => st[f[0]] || 0)));
+      tot.visits += d.visits; tot.uniq += d.uniq; tot.orders += o;
+      FUNNEL.forEach((f) => { totSteps[f[0]] += st[f[0]] || 0; });
+    });
+    out.push([]);
+    out.push(["TOTAL", keys.length + " days", tot.visits, uniqAll, tot.orders,
+      tot.visits ? Math.round((tot.orders / tot.visits) * 100) : 0]
+      .concat(FUNNEL.map((f) => (funnel ? (funnel.find((x) => x.k === f[0]) || {}).n || 0 : 0))));
+    out.push([]);
+    out.push(["Note", "Day rows count a device once per day. The TOTAL counts each device once for the whole range, so it is smaller than the column added up (" + tot.uniq + ")."]);
+    downloadCSV("hunt-and-eat-visitors-" + span.from + "-to-" + span.to + ".csv", out);
+  };
+
+  const exportSources = () => {
+    const out = [["Source", "Visits", "Share %"]];
+    refsAll.forEach((r) => out.push([r, refCount[r], totalVisits ? Math.round((refCount[r] / totalVisits) * 100) : 0]));
+    out.push([]);
+    out.push(["TOTAL", totalVisits, 100]);
+    downloadCSV("hunt-and-eat-traffic-sources-" + span.from + "-to-" + span.to + ".csv", out);
+  };
+
+  const rangeLabel = keys.length === 1 ? shortDay(keys[0]) : shortDay(span.from) + " – " + shortDay(span.to);
 
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12, marginBottom: 18 }}>
-        <Stat l="Visits today" v={today.visits} sub={today.uniq + " unique device(s)"} />
-        <Stat l="Orders today" v={todayOrders} sub="from these visits" />
-        <Stat l="Conversion today" v={conv + "%"} sub="visits that ordered" hot={today.visits > 10 && conv < 5} />
-        <Stat l="Visits this week" v={week} sub="last 7 days" />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12, marginBottom: 14 }}>
+        <Stat l="Visits" v={totalVisits} sub={keys.length === 1 ? rangeLabel : keys.length + " days · " + daysWithVisits + " with visits"} />
+        <Stat l="Unique devices" v={uniqAll} sub="counted once each" />
+        <Stat l="Orders" v={totalOrders} sub="from these visits" />
+        <Stat l="Conversion" v={conv + "%"} sub={best && best.visits ? "busiest: " + shortDay(best.date) : "visits that ordered"} hot={totalVisits > 20 && conv < 5} />
       </div>
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h3 className="display" style={{ fontWeight: 800, fontSize: 17, margin: "0 0 10px" }}>Last 7 days</h3>
-        <button onClick={load} style={{ background: "#fff", border: "1.5px solid " + BRAND.red, color: BRAND.red, borderRadius: 8, padding: "6px 14px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>{busy ? "…" : "↻ Refresh"}</button>
+      {backwards && (
+        <div style={{ background: "#FBE9E7", border: "1px solid #F0C0BA", borderRadius: 10, padding: "10px 13px", fontSize: 13, marginBottom: 10, color: BRAND.danger, fontWeight: 700 }}>
+          The "from" date is after the "to" date — swap them to see the report.
+        </div>
+      )}
+      {capped && (
+        <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 10, padding: "10px 13px", fontSize: 13, marginBottom: 10, lineHeight: 1.55 }}>
+          You asked for <b>{askedDays} days</b>. A report covers at most <b>400 days</b> at a time, so this one runs
+          from <b>{keys[0]}</b> to <b>{keys[keys.length - 1]}</b>. Pull the rest as a second report.
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
+        <select value={preset} onChange={(e) => setPreset(e.target.value)} style={{ ...inp, width: "auto", padding: "6px 10px", fontSize: 12.5, fontWeight: 700 }}>
+          <option value="1">Today</option>
+          <option value="3">Last 3 days</option>
+          <option value="7">Last 7 days</option>
+          <option value="30">Last 30 days</option>
+          <option value="90">Last 3 months</option>
+          <option value="180">Last 6 months</option>
+          <option value="365">Last 1 year</option>
+          <option value="custom">Custom dates…</option>
+        </select>
+
+        {preset === "custom" && (
+          <span style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            <input type="date" value={from} max={to || today} onChange={(e) => setFrom(e.target.value)}
+              style={{ ...inp, width: "auto", padding: "5px 9px", fontSize: 12.5 }} />
+            <span style={{ fontSize: 12.5, color: "#6b675e" }}>to</span>
+            <input type="date" value={to} min={from} max={today} onChange={(e) => setTo(e.target.value)}
+              style={{ ...inp, width: "auto", padding: "5px 9px", fontSize: 12.5 }} />
+          </span>
+        )}
+
+        <button onClick={exportDaily} disabled={busy}
+          style={{ background: BRAND.ok, color: "#fff", border: "none", borderRadius: 8, padding: "7px 13px", fontWeight: 800, fontSize: 12.5, cursor: busy ? "wait" : "pointer", opacity: busy ? .55 : 1 }}>
+          ⬇ Day-wise report
+        </button>
+        <button onClick={exportSources} disabled={busy || !refsAll.length}
+          style={{ background: "#241E1A", color: "#fff", border: "none", borderRadius: 8, padding: "7px 13px", fontWeight: 800, fontSize: 12.5, cursor: busy || !refsAll.length ? "not-allowed" : "pointer", opacity: busy || !refsAll.length ? .55 : 1 }}>
+          ⬇ Traffic sources
+        </button>
+        <button onClick={load} style={{ marginLeft: "auto", background: "#fff", border: "1.5px solid " + BRAND.red, color: BRAND.red, borderRadius: 8, padding: "6px 14px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
+          {busy ? (prog ? "Reading day " + prog[0] + " of " + prog[1] + "…" : "…") : "↻ Refresh"}
+        </button>
       </div>
-      <div style={{ background: "#fff", borderRadius: 12, padding: 16, display: "flex", alignItems: "flex-end", gap: 10, height: 170 }}>
-        {data.map((d) => (
-          <div key={d.date} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-            <div style={{ fontSize: 11, fontWeight: 800 }}>{d.visits}</div>
-            <div title={d.uniq + " unique"} style={{ width: "100%", background: BRAND.red, borderRadius: "6px 6px 0 0", height: Math.max(4, Math.round((d.visits / max) * 100)) + "px", opacity: .85 }} />
-            <div style={{ fontSize: 10.5, color: "#8a857a" }}>{new Date(d.date + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</div>
-            <div style={{ fontSize: 10, color: "#b3ada0" }}>{ordersOn(d.date)} ord</div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
+        <h3 className="display" style={{ fontWeight: 800, fontSize: 17, margin: "0 0 10px" }}>{rangeLabel}</h3>
+        {grouped.size > 1 && (
+          <span style={{ fontSize: 11.5, color: "#8a857a" }}>
+            grouped into {grouped.size === 7 ? "weeks" : "months"} — the download still has every day
+          </span>
+        )}
+      </div>
+      <div style={{ background: "#fff", borderRadius: 12, padding: 16, display: "flex", alignItems: "flex-end", gap: grouped.bars.length > 20 ? 3 : 10, height: 170, overflowX: "auto" }}>
+        {grouped.bars.length === 0 && <div style={{ color: "#8a857a", fontSize: 13, margin: "auto" }}>No visits in this range.</div>}
+        {grouped.bars.map((b, i) => (
+          <div key={i} style={{ flex: 1, minWidth: grouped.bars.length > 20 ? 14 : 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+            {grouped.bars.length <= 20 && <div style={{ fontSize: 11, fontWeight: 800 }}>{b.visits}</div>}
+            <div title={b.tip + " · " + b.visits + " visits · " + b.uniq + " unique · " + b.orders + " orders"}
+              style={{ width: "100%", background: BRAND.red, borderRadius: "5px 5px 0 0", height: Math.max(3, Math.round((b.visits / max) * 100)) + "px", opacity: .85 }} />
+            {grouped.bars.length <= 20 ? (
+              <>
+                <div style={{ fontSize: 10.5, color: "#8a857a" }}>{b.label}</div>
+                <div style={{ fontSize: 10, color: "#b3ada0" }}>{b.orders} ord</div>
+              </>
+            ) : (i % Math.ceil(grouped.bars.length / 8) === 0 && <div style={{ fontSize: 9.5, color: "#8a857a", whiteSpace: "nowrap" }}>{b.label}</div>)}
           </div>
         ))}
       </div>
 
       <h3 className="display" style={{ fontWeight: 800, fontSize: 17, margin: "22px 0 4px" }}>Where visitors drop off</h3>
-      <p style={{ fontSize: 12.5, color: "#6b675e", margin: "0 0 10px" }}>Last 7 days — how far each visitor got before leaving. The red line is your biggest leak.</p>
+      <p style={{ fontSize: 12.5, color: "#6b675e", margin: "0 0 10px" }}>{rangeLabel} — how far each visitor got before leaving. The red line is your biggest leak.</p>
       {funnel && (() => {
         const top = funnel[0].n || 1;
         let worst = { i: -1, lost: 0 };
         funnel.forEach((s, i) => {
           if (i === 0) return;
           const lost = funnel[i - 1].n - s.n;
-          if (lost > worst.lost) worst = { i, lost };
+          if (lost > worst.lost) worst = { i: i, lost: lost };
         });
         return (
           <div style={{ display: "grid", gap: 6 }}>
@@ -1071,6 +1203,7 @@ function Visitors({ orders }) {
             <span style={{ fontWeight: 600 }}>{r}</span><b>{refCount[r]}</b>
           </div>
         ))}
+        {refsAll.length > 6 && <div style={{ fontSize: 11.5, color: "#8a857a" }}>+ {refsAll.length - 6} more — in the traffic-sources download.</div>}
       </div>
       <p style={{ fontSize: 11.5, color: "#8a857a", marginTop: 12 }}>
         Counts one visit per device per browsing session. Links shared on WhatsApp usually show as “Direct / WhatsApp”.
@@ -1091,14 +1224,15 @@ function dayList(fromKey, toKey) {
 function shiftKey(n) { const d = new Date(); d.setDate(d.getDate() + n); return dkey(d); }
 
 /* fetch many days at once without hammering the database */
-async function fetchDays(base, ns, keys, onProgress) {
+async function fetchDays(base, ns, keys, onProgress, bucket) {
   const byDay = {};
   const SIZE = 10;
+  const what = bucket || "sessions";          // sessions | visits | events
   for (let i = 0; i < keys.length; i += SIZE) {
     const batch = keys.slice(i, i + SIZE);
     await Promise.all(batch.map(async (k) => {
       try {
-        const r = await fetch(base + "/" + ns + "/sessions/" + k + ".json");
+        const r = await fetch(base + "/" + ns + "/" + what + "/" + k + ".json");
         byDay[k] = r.ok ? (await r.json()) || {} : {};
       } catch (e) { byDay[k] = {}; }
     }));
@@ -1906,7 +2040,7 @@ function AField({ label, v, on, ph }) {
   );
 }
 
-function BannerRow({ b, i, total, cats, onChange, onMove, onDelete }) {
+function BannerRow({ b, i, total, cats, products, onChange, onMove, onDelete }) {
   const [busy, setBusy] = useState(false);
   const set = (k, v) => onChange({ ...b, [k]: v });
 
@@ -1990,17 +2124,34 @@ function BannerRow({ b, i, total, cats, onChange, onMove, onDelete }) {
       <div style={{ marginTop: 12 }}>
         <div style={{ fontSize: 11.5, fontWeight: 700, color: "#6b675e", marginBottom: 4 }}>When a customer taps this banner</div>
         <select value={b.link || ""} onChange={(e) => set("link", e.target.value)}
-          style={{ width: "100%", maxWidth: 420, padding: "9px 10px", borderRadius: 9, border: "1.5px solid #e5dfd0", fontSize: 13.5, boxSizing: "border-box", background: "#fff" }}>
+          style={{ width: "100%", maxWidth: 480, padding: "9px 10px", borderRadius: 9, border: "1.5px solid #e5dfd0", fontSize: 13.5, boxSizing: "border-box", background: "#fff" }}>
           <option value="">Nothing — just show it</option>
           <option value="#menu">Jump to the menu</option>
-          {(cats || []).map((c) => <option key={c.id} value={"cat:" + c.id}>Open the "{c.name}" category</option>)}
+          <optgroup label="Open a category">
+            {(cats || []).map((c) => <option key={c.id} value={"cat:" + c.id}>{c.name}</option>)}
+          </optgroup>
+          <optgroup label="Open one item">
+            {(products || []).map((p) => (
+              <option key={p.id} value={"prod:" + p.id}>{p.name}{p.stock === false ? " (out of stock)" : ""}</option>
+            ))}
+          </optgroup>
         </select>
+        {b.link && b.link.indexOf("prod:") === 0 && !(products || []).some((p) => "prod:" + p.id === b.link) && (
+          <div style={{ color: "#A6212E", fontSize: 12, fontWeight: 700, marginTop: 6 }}>
+            That item no longer exists — pick another, or the banner will just open the menu.
+          </div>
+        )}
+        {b.link && b.link.indexOf("cat:") === 0 && !(cats || []).some((c) => "cat:" + c.id === b.link) && (
+          <div style={{ color: "#A6212E", fontSize: 12, fontWeight: 700, marginTop: 6 }}>
+            That category no longer exists — pick another, or the banner will just open the menu.
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function BannersTab({ settings, cats, save }) {
+function BannersTab({ settings, cats, products, save }) {
   const [list, setList] = useState(() => (settings.banners || []).map((b) => ({ ...b })));
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -2049,7 +2200,7 @@ function BannersTab({ settings, cats, save }) {
       )}
 
       {list.map((b, i) => (
-        <BannerRow key={b.id} b={b} i={i} total={list.length} cats={cats}
+        <BannerRow key={b.id} b={b} i={i} total={list.length} cats={cats} products={products}
           onChange={(nb) => edit((L) => L.map((x, k) => (k === i ? nb : x)))}
           onMove={(d) => edit((L) => {
             const n = L.slice(); const j = i + d;
@@ -2059,6 +2210,35 @@ function BannersTab({ settings, cats, save }) {
           onDelete={() => edit((L) => L.filter((x, k) => k !== i))} />
       ))}
     </div>
+  );
+}
+
+function CatPhoto({ c, onPick }) {
+  const [busy, setBusy] = useState(false);
+  const take = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    setBusy(true);
+    try { onPick(await compressImage(f, 320, 0.76)); }
+    catch (err) { alert("Could not read that image. Try a JPG or PNG."); }
+    setBusy(false); e.target.value = "";
+  };
+  return (
+    <label title={c.img ? "Change photo" : "Add a photo"}
+      style={{ position: "relative", width: 52, height: 52, flex: "0 0 auto", borderRadius: "50%", overflow: "hidden",
+        cursor: "pointer", display: "grid", placeItems: "center", border: "2px solid #fff",
+        background: "linear-gradient(160deg,#FFFDF6,#F3E3C8)", boxShadow: "0 2px 8px rgba(94,60,20,.18)" }}>
+      {busy ? <span style={{ fontSize: 10, fontWeight: 700 }}>…</span>
+        : c.img ? <img src={c.img} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        : <span style={{ fontSize: 15, opacity: .55 }}>📷</span>}
+      <input type="file" accept="image/*" onChange={take} style={{ display: "none" }} />
+      {c.img && (
+        <span onClick={(e) => { e.preventDefault(); e.stopPropagation(); onPick(""); }}
+          title="Remove photo"
+          style={{ position: "absolute", right: 0, bottom: 0, background: "#A6212E", color: "#fff", fontSize: 9,
+            fontWeight: 800, width: 16, height: 16, borderRadius: "50%", display: "grid", placeItems: "center" }}>✕</span>
+      )}
+    </label>
   );
 }
 
@@ -2076,7 +2256,7 @@ function CatManager({ cats, products, onSave, close }) {
     if (window.confirm(`Delete category "${c.name}"?`)) setList(list.filter((_, j) => j !== i));
   };
   const saveAll = () => {
-    const clean = list.filter((c) => (c.name || "").trim()).map((c) => ({ id: c.id, name: c.name.trim(), ta: (c.ta || "").trim(), icon: (c.icon || "🍽️").trim(), zoneFree: !!c.zoneFree }));
+    const clean = list.filter((c) => (c.name || "").trim()).map((c) => ({ id: c.id, name: c.name.trim(), ta: (c.ta || "").trim(), icon: (c.icon || "🍽️").trim(), img: c.img || "", zoneFree: !!c.zoneFree }));
     if (!clean.length) return alert("Keep at least one category.");
     onSave(clean);
   };
@@ -2085,6 +2265,7 @@ function CatManager({ cats, products, onSave, close }) {
     <Modal close={close}>
       <h3 className="display" style={{ fontWeight: 800, margin: "0 0 4px" }}>Manage categories</h3>
       <p style={{ fontSize: 12.5, color: "#6b675e", margin: "0 0 12px" }}>
+        Tap a circle to give that category a photo — it shows as a round tile on the shop. Without a photo the emoji is used.
         Rename freely — items stay linked. Use ▲▼ to set the order customers see on the store.
         Tick <b>Delivers all over India</b> on a category of shelf-stable items (pickles, podi, masala, dry fish).
         Customers outside your delivery zone can order from those categories only — fresh meat stays local.
@@ -2092,7 +2273,8 @@ function CatManager({ cats, products, onSave, close }) {
       <div style={{ display: "grid", gap: 8 }}>
         {list.map((c, i) => (
           <div key={c.id} style={{ display: "flex", gap: 6, alignItems: "center", background: "#FBF7EF", borderRadius: 10, padding: 8 }}>
-            <input value={c.icon} onChange={(e) => upd(i, { icon: e.target.value })} title="Emoji"
+            <CatPhoto c={c} onPick={(img) => upd(i, { img })} />
+            <input value={c.icon} onChange={(e) => upd(i, { icon: e.target.value })} title="Emoji — shown when there's no photo"
               style={{ ...inp, width: 46, textAlign: "center", padding: "8px 4px", fontSize: 17 }} />
             <div style={{ flex: 1, display: "grid", gap: 4 }}>
               <input value={c.name} onChange={(e) => upd(i, { name: e.target.value })} placeholder="Category name"
