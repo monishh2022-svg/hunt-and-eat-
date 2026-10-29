@@ -363,7 +363,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v4.2</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v4.4</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -1079,6 +1079,34 @@ function Visitors({ orders }) {
   );
 }
 
+/* ---- date-range helpers for reports ---- */
+function dayList(fromKey, toKey) {
+  const out = [];
+  const a = new Date(fromKey + "T00:00:00"), b = new Date(toKey + "T00:00:00");
+  if (isNaN(a.getTime()) || isNaN(b.getTime()) || b < a) return out;
+  const d = new Date(a);
+  while (d <= b && out.length < 400) { out.push(dkey(d)); d.setDate(d.getDate() + 1); }
+  return out;
+}
+function shiftKey(n) { const d = new Date(); d.setDate(d.getDate() + n); return dkey(d); }
+
+/* fetch many days at once without hammering the database */
+async function fetchDays(base, ns, keys, onProgress) {
+  const byDay = {};
+  const SIZE = 10;
+  for (let i = 0; i < keys.length; i += SIZE) {
+    const batch = keys.slice(i, i + SIZE);
+    await Promise.all(batch.map(async (k) => {
+      try {
+        const r = await fetch(base + "/" + ns + "/sessions/" + k + ".json");
+        byDay[k] = r.ok ? (await r.json()) || {} : {};
+      } catch (e) { byDay[k] = {}; }
+    }));
+    if (onProgress) onProgress(Math.min(keys.length, i + SIZE), keys.length);
+  }
+  return byDay;
+}
+
 function downloadCSV(filename, rows) {
   const esc = (v) => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
   const csv = rows.map((r) => r.map(esc).join(",")).join("\n");
@@ -1101,29 +1129,45 @@ const EV = {
 
 function Sessions() {
   const base = (typeof FIREBASE_RTDB_URL !== "undefined" && FIREBASE_RTDB_URL) ? FIREBASE_RTDB_URL.replace(/\/+$/, "") : null;
-  const [days, setDays] = useState(3);
+  const [preset, setPreset] = useState("3");          // "1" | "3" | "7" | "30" | "90" | "365" | "custom"
+  const [from, setFrom] = useState(shiftKey(-6));
+  const [to, setTo] = useState(dkey(new Date()));
   const [rows, setRows] = useState(null);
+  const [perDay, setPerDay] = useState({});           // day key -> sessions that day
   const [open, setOpen] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState("list");   // list | heat
+  const [prog, setProg] = useState(null);             // [done, total] while loading a long range
+  const [view, setView] = useState("list");           // list | heat
+
+  const today = dkey(new Date());
+  // the exact span being reported on
+  const span = preset === "custom"
+    ? { from: from, to: to }
+    : { from: shiftKey(-(Number(preset) - 1)), to: today };
+  const keys = dayList(span.from, span.to);
+  // dayList stops at 400 days, so say so rather than silently reporting on part of the range
+  const askedDays = (preset === "custom" && from && to && new Date(to) >= new Date(from))
+    ? Math.round((new Date(to + "T00:00:00") - new Date(from + "T00:00:00")) / 86400000) + 1 : 0;
+  const capped = askedDays > keys.length && keys.length > 0;
+  const backwards = preset === "custom" && from && to && new Date(to) < new Date(from);
 
   const load = async () => {
     if (!base) { setRows("nodb"); return; }
-    setBusy(true);
+    if (!keys.length) { setRows([]); setPerDay({}); return; }
+    setBusy(true); setProg([0, keys.length]);
+    const byDay = await fetchDays(base, VISIT_NS, keys, (d, n) => setProg([d, n]));
     const out = [];
-    for (let i = days - 1; i >= 0; i--) {
-      const d = new Date(); d.setDate(d.getDate() - i);
-      const key = dkey(d);
-      try {
-        const r = await fetch(base + "/" + VISIT_NS + "/sessions/" + key + ".json");
-        const j = r.ok ? await r.json() : null;
-        if (j) Object.keys(j).forEach((id) => out.push({ id: id, day: key, ...j[id] }));
-      } catch (e) {}
-    }
+    const grouped = {};
+    keys.forEach((k) => {
+      const j = byDay[k] || {};
+      const list = Object.keys(j).map((id) => ({ id: id, day: k, ...j[id] }));
+      grouped[k] = list;
+      list.forEach((s) => out.push(s));
+    });
     out.sort((a, b) => (b.t || 0) - (a.t || 0));
-    setRows(out); setBusy(false);
+    setRows(out); setPerDay(grouped); setProg(null); setBusy(false);
   };
-  useEffect(() => { load(); }, [days]);
+  useEffect(() => { load(); }, [preset, preset === "custom" ? from + "|" + to : ""]);
 
   if (rows === "nodb") return <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 10, padding: 14, fontSize: 13.5 }}>Session tracking needs the database connected.</div>;
   if (!rows) return <div style={{ color: "#8a857a", padding: 20 }}>Loading sessions…</div>;
@@ -1138,6 +1182,79 @@ function Sessions() {
   const rage = (s) => (s.e || []).filter((x) => x[1] === "rage").length;
   const dead = (s) => (s.e || []).filter((x) => x[1] === "dead").length;
 
+  /* ---- one row of the day-wise report ---- */
+  const dayStats = (list) => {
+    const n = list.length;
+    const o = { sessions: n, ordered: 0, checkout: 0, basket: 0, browsed: 0, rage: 0, dead: 0, mobile: 0, desktop: 0, secs: 0, clicks: 0 };
+    list.forEach((s) => {
+      const r = outcome(s).txt;
+      if (r === "Ordered") o.ordered++;
+      else if (r === "Left at checkout") o.checkout++;
+      else if (r === "Left with items in basket") o.basket++;
+      else o.browsed++;
+      o.rage += rage(s); o.dead += dead(s);
+      if (s.m === "mobile") o.mobile++; else o.desktop++;
+      o.secs += Number(s.d) || 0;
+      o.clicks += (s.c || []).length;
+    });
+    o.avg = n ? Math.round(o.secs / n) : 0;
+    o.conv = n ? Math.round((o.ordered / n) * 100) : 0;
+    return o;
+  };
+
+  const mmss = (s) => Math.floor(s / 60) + "m " + String(s % 60).padStart(2, "0") + "s";
+
+  const exportDaily = () => {
+    const out = [["Date", "Day", "Sessions", "Ordered", "Conversion %", "Left at checkout",
+      "Left with basket", "Only browsed", "Rage taps", "Dead taps", "Mobile", "Desktop",
+      "Avg time on site", "Clicks"]];
+    let tot = null;
+    keys.forEach((k) => {
+      const st = dayStats(perDay[k] || []);
+      const wd = new Date(k + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short" });
+      out.push([k, wd, st.sessions, st.ordered, st.conv, st.checkout, st.basket, st.browsed,
+        st.rage, st.dead, st.mobile, st.desktop, mmss(st.avg), st.clicks]);
+      if (!tot) tot = { ...st, secs: st.secs };
+      else { Object.keys(st).forEach((f) => { if (typeof st[f] === "number") tot[f] += st[f]; }); }
+    });
+    if (tot) {
+      const avg = tot.sessions ? Math.round(tot.secs / tot.sessions) : 0;
+      const conv = tot.sessions ? Math.round((tot.ordered / tot.sessions) * 100) : 0;
+      out.push([]);
+      out.push(["TOTAL", keys.length + " days", tot.sessions, tot.ordered, conv, tot.checkout,
+        tot.basket, tot.browsed, tot.rage, tot.dead, tot.mobile, tot.desktop, mmss(avg), tot.clicks]);
+    }
+    downloadCSV("hunt-and-eat-daily-" + span.from + "-to-" + span.to + ".csv", out);
+  };
+
+  const exportSessions = () => {
+    const out = [["Date", "Time", "Session", "Device", "Screen", "Came from", "Minutes on site",
+      "Outcome", "Rage taps", "Dead taps", "Clicks", "Scroll depth %", "What they did"]];
+    rows.forEach((s) => {
+      const d = s.t ? new Date(s.t) : null;
+      const deepest = Math.max(0, ...(s.e || []).filter((x) => x[1] === "scroll").map((x) => Number(x[2]) || 0));
+      const story = (s.e || []).map((x) => {
+        const at = (Number(x[0]) / 10).toFixed(1) + "s ";
+        if (x[1] === "click") return at + "tapped " + x[2];
+        if (x[1] === "step") return at + x[2];
+        if (x[1] === "scroll") return at + "scrolled " + x[2] + "%";
+        if (x[1] === "rage") return at + "RAGE TAP " + x[2];
+        if (x[1] === "dead") return at + "dead tap " + x[2];
+        if (x[1] === "field") return at + "started typing in " + x[2];
+        if (x[1] === "leave") return at + "left field " + x[2] + (x[3] ? " (filled)" : " (empty)");
+        if (x[1] === "open") return at + "opened " + x[2];
+        return at + x[1];
+      }).join(" | ");
+      out.push([s.day, d ? d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "",
+        s.id, s.m || "", (s.w || "") + "x" + (s.h || ""), s.r || "direct",
+        ((Number(s.d) || 0) / 60).toFixed(1), outcome(s).txt, rage(s), dead(s),
+        (s.c || []).length, deepest, story]);
+    });
+    downloadCSV("hunt-and-eat-sessions-" + span.from + "-to-" + span.to + ".csv", out);
+  };
+
+  const daysWithData = keys.filter((k) => (perDay[k] || []).length).length;
+
   const ordered = rows.filter((s) => outcome(s).txt === "Ordered").length;
   const frustrated = rows.filter((s) => rage(s) > 0).length;
   const allClicks = [];
@@ -1146,20 +1263,61 @@ function Sessions() {
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12, marginBottom: 14 }}>
-        <Stat l="Sessions" v={rows.length} sub={"last " + days + " day(s)"} />
+        <Stat l="Sessions" v={rows.length} sub={keys.length === 1 ? keys[0] : keys.length + " days · " + daysWithData + " with visits"} />
         <Stat l="Ordered" v={ordered} sub={rows.length ? Math.round((ordered / rows.length) * 100) + "% of visits" : "—"} />
         <Stat l="Frustrated visits" v={frustrated} sub="rage taps detected" hot={frustrated > 0} />
         <Stat l="Clicks mapped" v={allClicks.length} sub="for the heatmap" />
       </div>
 
+      {backwards && (
+        <div style={{ background: "#FBE9E7", border: "1px solid #F0C0BA", borderRadius: 10, padding: "10px 13px", fontSize: 13, marginBottom: 10, color: BRAND.danger, fontWeight: 700 }}>
+          The "from" date is after the "to" date — swap them to see the report.
+        </div>
+      )}
+      {capped && (
+        <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 10, padding: "10px 13px", fontSize: 13, marginBottom: 10, lineHeight: 1.55 }}>
+          You asked for <b>{askedDays} days</b>. A report covers at most <b>400 days</b> at a time, so this one runs
+          from <b>{keys[0]}</b> to <b>{keys[keys.length - 1]}</b>. Pull the rest as a second report.
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
         {[["list", "📃 Sessions"], ["heat", "🔥 Click heatmap"]].map(([v, l]) => (
           <button key={v} onClick={() => setView(v)} style={{ background: view === v ? BRAND.red : "#fff", color: view === v ? "#fff" : BRAND.ink, border: "1px solid #e5dfd0", borderRadius: 999, padding: "7px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>{l}</button>
         ))}
-        <select value={days} onChange={(e) => setDays(Number(e.target.value))} style={{ ...inp, width: "auto", padding: "6px 10px", fontSize: 12.5, fontWeight: 700 }}>
-          <option value={1}>Today</option><option value={3}>Last 3 days</option><option value={7}>Last 7 days</option>
+        <select value={preset} onChange={(e) => setPreset(e.target.value)} style={{ ...inp, width: "auto", padding: "6px 10px", fontSize: 12.5, fontWeight: 700 }}>
+          <option value="1">Today</option>
+          <option value="3">Last 3 days</option>
+          <option value="7">Last 7 days</option>
+          <option value="30">Last 30 days</option>
+          <option value="90">Last 3 months</option>
+          <option value="180">Last 6 months</option>
+          <option value="365">Last 1 year</option>
+          <option value="custom">Custom dates…</option>
         </select>
-        <button onClick={load} style={{ marginLeft: "auto", background: "#fff", border: "1.5px solid " + BRAND.red, color: BRAND.red, borderRadius: 8, padding: "6px 14px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>{busy ? "…" : "↻ Refresh"}</button>
+
+        {preset === "custom" && (
+          <span style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            <input type="date" value={from} max={to || today}
+              onChange={(e) => setFrom(e.target.value)}
+              style={{ ...inp, width: "auto", padding: "5px 9px", fontSize: 12.5 }} />
+            <span style={{ fontSize: 12.5, color: "#6b675e" }}>to</span>
+            <input type="date" value={to} min={from} max={today}
+              onChange={(e) => setTo(e.target.value)}
+              style={{ ...inp, width: "auto", padding: "5px 9px", fontSize: 12.5 }} />
+          </span>
+        )}
+
+        <button onClick={exportDaily} disabled={busy}
+          style={{ background: BRAND.ok, color: "#fff", border: "none", borderRadius: 8, padding: "7px 13px", fontWeight: 800, fontSize: 12.5, cursor: busy ? "wait" : "pointer", opacity: busy ? .55 : 1 }}>
+          ⬇ Day-wise report
+        </button>
+        <button onClick={exportSessions} disabled={busy || !rows.length}
+          style={{ background: "#241E1A", color: "#fff", border: "none", borderRadius: 8, padding: "7px 13px", fontWeight: 800, fontSize: 12.5, cursor: busy || !rows.length ? "not-allowed" : "pointer", opacity: busy || !rows.length ? .55 : 1 }}>
+          ⬇ Every session
+        </button>
+        <button onClick={load} style={{ marginLeft: "auto", background: "#fff", border: "1.5px solid " + BRAND.red, color: BRAND.red, borderRadius: 8, padding: "6px 14px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
+          {busy ? (prog ? "Reading day " + prog[0] + " of " + prog[1] + "…" : "…") : "↻ Refresh"}
+        </button>
       </div>
 
       {view === "heat" ? (
