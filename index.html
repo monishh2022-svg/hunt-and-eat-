@@ -551,7 +551,7 @@ const BOOT_MSGS = ["Firing up the farm…", "Picking the freshest birds…", "Sh
    Pauses while the pointer is on it, honours reduced-motion, and can be
    swiped on a phone. Banners come from the admin panel.
 --------------------------------------------------------------------- */
-function Banners({ banners, onCat }) {
+function Banners({ banners, onCat, onProduct, products, categories }) {
   const list = (banners || []).filter((b) => b && (b.img || b.title || b.kicker));
   const n = list.length;
   const [i, setI] = useState(0);
@@ -573,18 +573,38 @@ function Banners({ banners, onCat }) {
 
   const go = (d) => setI((x) => (x + d + n) % n);
 
+  const toMenu = () => {
+    const m = document.getElementById("menu");
+    if (m) m.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   const open = (b) => {
     const L = b.link || "";
+
+    // a specific item: show its category, scroll down, then open the item
+    if (L.indexOf("prod:") === 0) {
+      const p = (products || []).find((x) => x.id === L.slice(5));
+      if (!p) { if (onCat) onCat("all"); toMenu(); return; }   // item was deleted — show the menu
+      if (onCat) onCat(p.cat);
+      toMenu();
+      if (onProduct) setTimeout(() => onProduct(p), 420);      // let the scroll settle first
+      return;
+    }
+
     if (L.indexOf("cat:") === 0) {
-      if (onCat) onCat(L.slice(4));
-      const m = document.getElementById("menu");
-      if (m) m.scrollIntoView({ behavior: "smooth", block: "start" });
-    } else if (L.indexOf("#") === 0) {
+      const id = L.slice(4);
+      const alive = (categories || []).some((c) => c.id === id);
+      if (onCat) onCat(alive ? id : "all");                    // category was renamed away — show everything
+      toMenu();
+      return;
+    }
+
+    if (L.indexOf("#") === 0) {
       const m = document.getElementById(L.slice(1));
       if (m) m.scrollIntoView({ behavior: "smooth", block: "start" });
-    } else if (L) {
-      window.open(L, "_blank", "noopener");
+      return;
     }
+    if (L) window.open(L, "_blank", "noopener");
   };
 
   return (
@@ -963,7 +983,8 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         </div>
       )}
 
-      <Banners banners={settings.banners && settings.banners.length ? settings.banners : DEFAULT_BANNERS} onCat={setCat} />
+      <Banners banners={settings.banners && settings.banners.length ? settings.banners : DEFAULT_BANNERS}
+        onCat={setCat} onProduct={setDetail} products={products} categories={categories} />
 
       <section className="hero-sec" style={{ background: "radial-gradient(1200px 400px at 18% -10%, #FFFDF6, transparent), linear-gradient(180deg, #FDF8EE, #F6EADB)", borderBottom: "1px solid #E9D9B8", padding: "30px 16px 30px" }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
@@ -1083,7 +1104,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v4.5</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v4.6</span>
         </div>
       </footer>
 
