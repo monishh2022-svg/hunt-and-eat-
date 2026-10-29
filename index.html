@@ -228,6 +228,35 @@ const DEFAULT_SETTINGS = {
   adminPin: "1234",
 };
 
+/* ---- top banner carousel ---------------------------------------------
+   Each banner is either an uploaded poster (b.img) or a designed panel
+   built from these fields. Edit them in Admin -> Banners.
+---------------------------------------------------------------------- */
+const DEFAULT_BANNERS = [
+  { id: "b1", theme: "red", emoji: "🐓",
+    kicker: "THIS FESTIVE SEASON, GO FRESH.", title: "SWITCH TO HUNT & EAT.",
+    sub: "Naattu kozhi, cut only after you order",
+    tag: "WHOLE BIRD", price: "650", was: "720", unit: "per bird",
+    cta: "Order now", link: "cat:chicken" },
+  { id: "b2", theme: "dark", emoji: "🍗",
+    kicker: "CURRY CUT", title: "RICH. TENDER. CURRY-READY.",
+    sub: "Skin-on country chicken, 12 – 14 pieces",
+    tag: "500 GM PACK", price: "380", was: "420", unit: "per pack",
+    cta: "Order now", link: "cat:cuts" },
+  { id: "b3", theme: "green", emoji: "🛵",
+    kicker: "SAME-DAY DELIVERY", title: "FREE DELIVERY ON BIG ORDERS.",
+    sub: "No preservatives. No cold storage. Ever.",
+    tag: "FREE ABOVE", price: "999", was: "", unit: "delivery on us",
+    cta: "See the menu", link: "#menu" },
+];
+
+const BTHEME = {
+  red:   { bg: "linear-gradient(118deg,#7E1620 0%,#A6212E 48%,#C4333F 100%)", ink: "#fff",     sub: "rgba(255,255,255,.82)", gold: "#F3D489", badge: "#FFFDF6", badgeInk: "#8E1A26" },
+  dark:  { bg: "linear-gradient(118deg,#16120F 0%,#2C211A 50%,#4A2B1E 100%)", ink: "#fff",     sub: "rgba(255,255,255,.78)", gold: "#F0C96A", badge: "#F3D489", badgeInk: "#2C211A" },
+  green: { bg: "linear-gradient(118deg,#113F25 0%,#1D6B3F 52%,#2C8A54 100%)", ink: "#fff",     sub: "rgba(255,255,255,.82)", gold: "#F3D489", badge: "#FFFDF6", badgeInk: "#13532F" },
+  cream: { bg: "linear-gradient(118deg,#FFFDF6 0%,#F6EADB 55%,#EEDCBE 100%)", ink: "#3A2F22", sub: "#6d6252",               gold: "#8E6A1F", badge: "#A6212E", badgeInk: "#fff" },
+};
+
 const STATUSES = ["Order received", "Cutting & cleaning", "Packed", "Out for delivery", "Delivered"];
 
 const rup = (n) => "₹" + Number(n).toLocaleString("en-IN");
@@ -515,7 +544,117 @@ async function trackVisit(ns) {
    left off — same spinning ring, same breathing logo, same progress
    bar — so the logo keeps buffering without a visible jump.
 --------------------------------------------------------------------- */
-const BOOT_MSGS = ["Firing up the farm\u2026", "Picking the freshest birds\u2026", "Sharpening the knives\u2026", "Almost ready\u2026"];
+const BOOT_MSGS = ["Firing up the farm…", "Picking the freshest birds…", "Sharpening the knives…", "Almost ready…"];
+
+/* ---------------------------------------------------------------------
+   Auto-rotating banner strip across the top of the shop.
+   Pauses while the pointer is on it, honours reduced-motion, and can be
+   swiped on a phone. Banners come from the admin panel.
+--------------------------------------------------------------------- */
+function Banners({ banners, onCat }) {
+  const list = (banners || []).filter((b) => b && (b.img || b.title || b.kicker));
+  const n = list.length;
+  const [i, setI] = useState(0);
+  const [hold, setHold] = useState(false);
+  const touch = useRef(null);
+
+  useEffect(() => { if (i >= n) setI(0); }, [n, i]);
+
+  useEffect(() => {
+    if (n < 2 || hold) return;
+    try {
+      if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    } catch (e) {}
+    const t = setInterval(() => setI((x) => (x + 1) % n), 4800);
+    return () => clearInterval(t);
+  }, [n, hold, i]);
+
+  if (!n) return null;
+
+  const go = (d) => setI((x) => (x + d + n) % n);
+
+  const open = (b) => {
+    const L = b.link || "";
+    if (L.indexOf("cat:") === 0) {
+      if (onCat) onCat(L.slice(4));
+      const m = document.getElementById("menu");
+      if (m) m.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else if (L.indexOf("#") === 0) {
+      const m = document.getElementById(L.slice(1));
+      if (m) m.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else if (L) {
+      window.open(L, "_blank", "noopener");
+    }
+  };
+
+  return (
+    <div style={{ maxWidth: 1100, margin: "0 auto", padding: "16px 16px 0" }}>
+      <div className="bnr-wrap"
+        onMouseEnter={() => setHold(true)} onMouseLeave={() => setHold(false)}
+        onTouchStart={(e) => { touch.current = e.touches[0].clientX; setHold(true); }}
+        onTouchEnd={(e) => {
+          const s = touch.current; touch.current = null; setHold(false);
+          if (s == null) return;
+          const dx = e.changedTouches[0].clientX - s;
+          if (Math.abs(dx) > 42) go(dx < 0 ? 1 : -1);
+        }}>
+        <div className="bnr-track" style={{ width: n * 100 + "%", transform: "translateX(-" + (i * (100 / n)) + "%)" }}>
+          {list.map((b) => {
+            const th = BTHEME[b.theme] || BTHEME.red;
+            const clickable = !!b.link;
+            return (
+              <div key={b.id} className="bnr-slide" style={{ width: (100 / n) + "%", flex: "0 0 auto", position: "relative", cursor: clickable ? "pointer" : "default" }}
+                onClick={() => clickable && open(b)}>
+                {b.img ? (
+                  <img src={b.img} alt={b.title || "offer"} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                ) : (
+                  <div className="bnr-pad" style={{ width: "100%", height: "100%", background: th.bg, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 20, padding: "28px 72px", boxSizing: "border-box", position: "relative", overflow: "hidden" }}>
+                    <div className="bnr-emoji" style={{ position: "absolute", right: -14, bottom: -26, fontSize: 190, opacity: .11, lineHeight: 1, pointerEvents: "none" }}>{b.emoji || ""}</div>
+                    <div style={{ position: "relative", zIndex: 2, maxWidth: 560 }}>
+                      {b.kicker && <div className="bnr-k" style={{ color: th.gold, fontWeight: 800, marginBottom: 7 }}>{b.kicker}</div>}
+                      {b.title && <div className="display bnr-h" style={{ color: th.ink, fontWeight: 800, letterSpacing: "-.01em" }}>{b.title}</div>}
+                      {b.sub && <div className="bnr-s" style={{ color: th.sub, marginTop: 8, lineHeight: 1.5 }}>{b.sub}</div>}
+                      {b.cta && (
+                        <span style={{ display: "inline-block", marginTop: 13, background: th.gold, color: "#3A2F22", borderRadius: 999, padding: "8px 19px", fontWeight: 800, fontSize: 12.5 }}>
+                          {b.cta} →
+                        </span>
+                      )}
+                    </div>
+                    {b.price && (
+                      <div className="bnr-badge" style={{ position: "relative", zIndex: 2, background: th.badge, color: th.badgeInk, borderRadius: 16, padding: "16px 24px", textAlign: "center", boxShadow: "0 8px 22px rgba(0,0,0,.18)", flex: "0 0 auto" }}>
+                        {b.tag && <div style={{ fontSize: 10, letterSpacing: 2, fontWeight: 800, opacity: .78 }}>{b.tag}</div>}
+                        <div style={{ display: "flex", alignItems: "baseline", gap: 8, justifyContent: "center", marginTop: 3 }}>
+                          {b.was && <span style={{ fontSize: 17, opacity: .5, textDecoration: "line-through" }}>₹{b.was}</span>}
+                          <span className="display bnr-price" style={{ fontWeight: 800, lineHeight: 1 }}>₹{b.price}</span>
+                        </div>
+                        {b.unit && <div style={{ fontSize: 11, opacity: .72, marginTop: 3, fontWeight: 600 }}>{b.unit}</div>}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {n > 1 && (
+          <>
+            <button className="bnr-arrow" style={{ left: 12 }} aria-label="Previous offer"
+              onClick={(e) => { e.stopPropagation(); go(-1); }}>‹</button>
+            <button className="bnr-arrow" style={{ right: 12 }} aria-label="Next offer"
+              onClick={(e) => { e.stopPropagation(); go(1); }}>›</button>
+            <div className="bnr-dots">
+              {list.map((b, k) => (
+                <button key={b.id} className={"bnr-dot" + (k === i ? " on" : "")} aria-label={"Offer " + (k + 1)}
+                  onClick={(e) => { e.stopPropagation(); setI(k); }} />
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function Booting() {
   const [i, setI] = useState(0);
@@ -644,6 +783,36 @@ function App() {
           .p-price { font-size: 15px !important; }
           .cartbar { max-width: 94vw; font-size: 13.5px; padding: 11px 16px !important; }
         }
+        /* ---- top banner carousel ---- */
+        .bnr-wrap { position: relative; border-radius: 18px; overflow: hidden; box-shadow: 0 10px 30px rgba(94,15,24,.13); background: #F6EADB; }
+        .bnr-slide { aspect-ratio: 1060 / 300; min-height: 210px; }
+        .bnr-track { display: flex; transition: transform .55s cubic-bezier(.4,0,.2,1); }
+        .bnr-arrow { position: absolute; top: 50%; transform: translateY(-50%); width: 38px; height: 38px; border-radius: 50%;
+          border: none; background: rgba(255,253,246,.92); color: #8E1A26; font-size: 19px; line-height: 1; cursor: pointer;
+          box-shadow: 0 3px 12px rgba(0,0,0,.18); display: grid; place-items: center; z-index: 3; }
+        .bnr-arrow:hover { background: #fff; }
+        .bnr-dots { position: absolute; left: 0; right: 0; bottom: 12px; display: flex; gap: 6px; justify-content: center; z-index: 3; }
+        .bnr-dot { height: 5px; width: 7px; border-radius: 99px; border: none; padding: 0; cursor: pointer;
+          background: rgba(255,255,255,.52); transition: width .3s ease, background .3s ease; }
+        .bnr-dot.on { width: 24px; background: #fff; }
+        .bnr-h { font-size: 31px; line-height: 1.12; }
+        .bnr-k { font-size: 12.5px; letter-spacing: 2.6px; }
+        .bnr-s { font-size: 14px; }
+        .bnr-badge { min-width: 190px; }
+        .bnr-price { font-size: 46px; }
+        @media (max-width: 760px) {
+          .bnr-slide { aspect-ratio: 16 / 11; min-height: 0; }
+          .bnr-h { font-size: 21px; }
+          .bnr-k { font-size: 9.5px; letter-spacing: 1.9px; }
+          .bnr-s { font-size: 11.5px; }
+          .bnr-pad { padding: 18px 16px !important; gap: 10px !important; flex-direction: column !important; align-items: flex-start !important; justify-content: center !important; }
+          .bnr-badge { min-width: 0; padding: 8px 16px !important; }
+          .bnr-price { font-size: 27px; }
+          .bnr-arrow { width: 30px; height: 30px; font-size: 16px; }
+          .bnr-emoji { display: none !important; }
+          .bnr-arrow { display: none; }
+        }
+        @media (prefers-reduced-motion: reduce) { .bnr-track { transition: none; } }
         .fadeup { animation: fadeup .35s ease both; }
         @keyframes fadeup { from { opacity: 0; transform: translateY(8px);} to { opacity: 1; transform: none; } }
         @media (prefers-reduced-motion: reduce) { .fadeup { animation: none; } }
@@ -767,6 +936,8 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         </div>
       )}
 
+      <Banners banners={settings.banners && settings.banners.length ? settings.banners : DEFAULT_BANNERS} onCat={setCat} />
+
       <section className="hero-sec" style={{ background: "radial-gradient(1200px 400px at 18% -10%, #FFFDF6, transparent), linear-gradient(180deg, #FDF8EE, #F6EADB)", borderBottom: "1px solid #E9D9B8", padding: "44px 16px 52px" }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
           <div style={{ flex: "1 1 320px" }} className="fadeup">
@@ -819,7 +990,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
                 background: cat === c.id ? "linear-gradient(180deg,#B32534,#8E1A26)" : "transparent", color: cat === c.id ? "#fff" : BRAND.ink, boxShadow: cat === c.id ? "0 4px 12px rgba(142,26,38,.30)" : "none",
                 fontWeight: 600, fontSize: 13, display: "flex", flexDirection: "column", alignItems: "center", gap: 2, minWidth: 92,
               }}>
-              <span style={{ fontSize: 20 }}>{locked ? "\ud83d\udd12" : c.icon}</span>
+              <span style={{ fontSize: 20 }}>{locked ? "🔒" : c.icon}</span>
               {c.name}
               <span style={{ fontSize: 10, opacity: 0.7 }}>
                 {locked ? "Local only" : (c.zoneFree ? "All India" : c.ta)}
@@ -837,7 +1008,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
             border: "1px solid " + (outsideZone ? "#EAD9A8" : "#BEDFC8"),
             borderRadius: 12, padding: "12px 15px", marginBottom: 16,
             display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 20 }}>{outsideZone ? "\ud83d\udce6" : areaLoc ? "\u2705" : "\ud83d\udccd"}</span>
+            <span style={{ fontSize: 20 }}>{outsideZone ? "📦" : areaLoc ? "✅" : "📍"}</span>
             <div style={{ flex: 1, minWidth: 220, fontSize: 13.5, lineHeight: 1.55 }}>
               {!areaLoc && (
                 <>
@@ -857,7 +1028,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
                 <>
                   <b>You are outside our fresh-delivery area.</b>{" "}
                   <span style={{ color: "#5c584e" }}>
-                    You can still order {freeCats.map((id) => (cats.find((c) => c.id === id) || {}).name).filter(Boolean).join(", ")} \u2014 we send {freeCats.length > 1 ? "those" : "that"} anywhere in India. Fresh meat needs a local address.
+                    You can still order {freeCats.map((id) => (cats.find((c) => c.id === id) || {}).name).filter(Boolean).join(", ")} — we send {freeCats.length > 1 ? "those" : "that"} anywhere in India. Fresh meat needs a local address.
                   </span>
                 </>
               )}
@@ -898,7 +1069,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v4.1</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v4.2</span>
         </div>
       </footer>
 
@@ -1352,7 +1523,7 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
       subtotal, delFee, total, ...form,
       slotDate: shipOnly ? dkey(new Date()) : day,
       slotId: shipOnly ? "ship" : slotId,
-      slotLabel: shipOnly ? ("\ud83d\udce6 All-India courier \u00b7 " + (settings.shipDays || "3 \u2013 5 days")) : slot.label,
+      slotLabel: shipOnly ? ("📦 All-India courier · " + (settings.shipDays || "3 – 5 days")) : slot.label,
       mode: shipOnly ? "ship" : "local",
       status: "Order received", placedAt: new Date().toISOString(),
     });
@@ -1372,9 +1543,9 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
         <>
           <SectionLabel n="1" t="All-India delivery" />
           <div style={{ background: "#FFF9EC", border: "1.5px solid #E8D5A8", borderRadius: 12, padding: 14, marginBottom: 18, fontSize: 13, lineHeight: 1.65, color: "#5c584e" }}>
-            <b style={{ color: BRAND.ink }}>\ud83d\udce6 We courier this order to you</b><br />
+            <b style={{ color: BRAND.ink }}>📦 We courier this order to you</b><br />
             Your location is outside our fresh-delivery area, but everything in your basket travels well.
-            We pack and dispatch within 24 hours \u2014 delivery usually takes {settings.shipDays || "3 \u2013 5 days"}, and we send tracking by SMS.
+            We pack and dispatch within 24 hours — delivery usually takes {settings.shipDays || "3 – 5 days"}, and we send tracking by SMS.
           </div>
         </>
       ) : (
