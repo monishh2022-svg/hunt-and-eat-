@@ -932,6 +932,34 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
   const [trackOpen, setTrackOpen] = useState(false);
   const [detail, setDetail] = useState(null);
 
+  /* ------------------------------------------------------------------
+     The phone's back gesture should close whatever is open on top —
+     not walk out of the shop. Without this, backing out of the basket
+     leaves the site entirely (and in an installed app, shuts it).
+  ------------------------------------------------------------------ */
+  const overlayOpen = cartOpen || checkout || !!detail || trackOpen || areaOpen;
+  const closeTop = useRef(function () {});
+  closeTop.current = function () {
+    if (detail) return setDetail(null);
+    if (areaOpen) return setAreaOpen(false);
+    if (trackOpen) return setTrackOpen(false);
+    if (checkout) return setCheckout(false);
+    if (cartOpen) return setCartOpen(false);
+  };
+  useEffect(() => {
+    if (!overlayOpen) return;
+    try { window.history.pushState({ heOverlay: 1 }, ""); } catch (e) { return; }
+    const onPop = () => { closeTop.current(); };
+    window.addEventListener("popstate", onPop);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      // closed with a button rather than Back: take our history entry back out
+      try {
+        if (window.history.state && window.history.state.heOverlay) window.history.back();
+      } catch (e) {}
+    };
+  }, [overlayOpen]);
+
   const visible = products.filter((p) =>
     (cat === "all" || p.cat === cat) &&
     p.name.toLowerCase().includes(search.toLowerCase()) &&
@@ -1155,7 +1183,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v5.1</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v5.2</span>
         </div>
       </footer>
 
