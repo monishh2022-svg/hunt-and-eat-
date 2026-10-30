@@ -366,7 +366,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v5.1</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v5.3</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -2116,7 +2116,9 @@ function BannerRow({ b, i, total, cats, products, onChange, onMove, onDelete }) 
             </button>
           )}
           <div style={{ fontSize: 11.5, color: "#8a857a", marginTop: 7, lineHeight: 1.55 }}>
-            Computer size: <b>1600 × 404</b> (or any 4:1 strip). A poster replaces the headline and price design completely.
+            Any size works — the banner takes the shape of your poster and never cuts it.
+            <b>1600 × 404</b> keeps the strip short and wide; a taller poster makes the banner taller.
+            A poster replaces the headline and price design completely.
           </div>
 
           <div style={{ marginTop: 12, paddingTop: 11, borderTop: "1px dashed #EADFC6" }}>
@@ -2137,8 +2139,8 @@ function BannerRow({ b, i, total, cats, products, onChange, onMove, onDelete }) 
                   </button>
                 )}
                 <div style={{ fontSize: 11.5, color: "#8a857a", marginTop: 7, lineHeight: 1.55 }}>
-                  Phone size: <b>820 × 461</b> (16:9). Without one, phones show only the <b>middle 45%</b> of the wide
-                  poster — anything at the left or right edge is cut off. Most of your customers are on a phone.
+                  Optional. A separate poster for phones — <b>820 × 461</b> suits a phone screen better than a wide
+                  strip. Without one, phones show the same poster as computers, scaled down to fit.
                 </div>
               </div>
             </div>
