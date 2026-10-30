@@ -585,7 +585,7 @@ function Banners({ banners, onCat, onProduct, products, categories }) {
   const seen = Object.keys(ratios).map((k) => ratios[k]);
   // the smallest width:height is the tallest poster — fit the strip to that one
   const tallest = seen.length ? Math.min.apply(null, seen) : null;
-  const slideRatio = tallest ? Math.min(4.2, Math.max(1.5, tallest)) : null;
+  const slideRatio = tallest ? Math.min(5.5, Math.max(1.2, tallest)) : null;
 
   const go = (d) => setI((x) => (x + d + n) % n);
 
@@ -642,12 +642,23 @@ function Banners({ banners, onCat, onProduct, products, categories }) {
               <div key={b.id} className="bnr-slide" style={{ width: (100 / n) + "%", flex: "0 0 auto", position: "relative", cursor: clickable ? "pointer" : "default", aspectRatio: slideRatio ? String(slideRatio) : undefined }}
                 onClick={() => clickable && open(b)}>
                 {b.img || b.imgM ? (
-                  <picture>
-                    {b.imgM && <source media="(max-width: 760px)" srcSet={b.imgM} />}
-                    <img src={b.img || b.imgM} alt={b.title || "offer"}
-                      onLoad={(e) => noteRatio(b.id, e.target)}
-                      style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", background: "#FDF8EE" }} />
-                  </picture>
+                  <div style={{ position: "absolute", inset: 0, overflow: "hidden", background: "#FDF8EE" }}>
+                    {/* the poster again, blurred and filling the frame — turns any
+                        letterbox band into part of the artwork instead of a gap */}
+                    <picture aria-hidden="true">
+                      {b.imgM && <source media="(max-width: 760px)" srcSet={b.imgM} />}
+                      <img src={b.img || b.imgM} alt="" aria-hidden="true"
+                        style={{ position: "absolute", inset: 0, width: "100%", height: "100%",
+                          objectFit: "cover", filter: "blur(22px)", transform: "scale(1.12)", opacity: 0.85 }} />
+                    </picture>
+                    <picture>
+                      {b.imgM && <source media="(max-width: 760px)" srcSet={b.imgM} />}
+                      <img src={b.img || b.imgM} alt={b.title || "offer"}
+                        onLoad={(e) => noteRatio(b.id, e.target)}
+                        ref={(el) => { if (el && el.complete) noteRatio(b.id, el); }}
+                        style={{ position: "relative", width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
+                    </picture>
+                  </div>
                 ) : (
                   <div className="bnr-pad" style={{ width: "100%", height: "100%", background: th.bg, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 18, padding: "22px 70px", boxSizing: "border-box", position: "relative", overflow: "hidden" }}>
                     <div className="bnr-emoji" style={{ position: "absolute", right: -14, bottom: -26, fontSize: 190, opacity: .11, lineHeight: 1, pointerEvents: "none" }}>{b.emoji || ""}</div>
@@ -1197,7 +1208,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v5.3</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v5.4</span>
         </div>
       </footer>
 
