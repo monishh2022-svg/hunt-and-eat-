@@ -228,6 +228,7 @@ const DEFAULT_SETTINGS = {
   cutoffHours: 2,
   deliveryDays: [0], // 0=Sunday … 6=Saturday
   daysAhead: 14,
+  preBookDays: 3,          // pre-book items need this many days' notice
   adminPin: "1234",
 };
 
@@ -1208,7 +1209,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v5.4</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v5.5</span>
         </div>
       </footer>
 
@@ -1641,10 +1642,12 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
   const allShippable = cartItems.length > 0 && cartItems.every((x) => freeIds.indexOf(x.p.cat) >= 0);
   const allowedDays = settings.deliveryDays && settings.deliveryDays.length ? settings.deliveryDays : [0];
   const days = [];
-  for (let i = 0; i < (settings.daysAhead || 14) && days.length < 8; i++) {
+  const preDays = isPreOrder ? Math.max(0, Number(settings.preBookDays === undefined ? 3 : settings.preBookDays) || 0) : 0;
+  const dayWindow = (settings.daysAhead || 14) + preDays;
+  for (let i = 0; i < dayWindow && days.length < 8; i++) {
     const d = new Date(); d.setDate(d.getDate() + i);
     if (!allowedDays.includes(d.getDay())) continue;
-    if (isPreOrder && i === 0) continue;     // pre-book is always for a later day
+    if (i < preDays) continue;               // pre-book needs notice before the first possible day
     days.push({ key: dkey(d), label: i === 0 ? "Today" : d.toLocaleDateString("en-IN", { weekday: "short" }), sub: d.toLocaleDateString("en-IN", { day: "numeric", month: "short" }) });
   }
   const [day, setDay] = useState(days[0] ? days[0].key : "");
@@ -1747,6 +1750,12 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
       ) : (
       <>
       <SectionLabel n="1" t="Delivery slot" />
+      {isPreOrder && preDays > 0 && (
+        <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 10, padding: "10px 13px", fontSize: 12.5, lineHeight: 1.55, margin: "0 0 10px", color: "#5c584e" }}>
+          <b style={{ color: "#8E6A1F" }}>Pre-book needs {preDays} day{preDays > 1 ? "s" : ""}&rsquo; notice.</b>{" "}
+          The earliest we can deliver this order is {days[0] ? days[0].sub : "the next available day"}.
+        </div>
+      )}
       <div style={{ fontSize: 12, color: "#7a6a4f", margin: "-4px 0 8px", fontWeight: 600 }}>
         We deliver on: {allowedDays.slice().sort().map((i) => ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][i]).join(", ")}
       </div>
