@@ -896,6 +896,9 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
   // Categories flagged "delivers all over India" can be ordered from anywhere.
   const freeCats = (categories || []).filter((c) => c.zoneFree).map((c) => c.id);
   const isFreeCat = (id) => freeCats.indexOf(id) >= 0;
+  // Pre-book categories are ordered ahead for a future date, on their own order.
+  const preCats = (categories || []).filter((c) => c.preBook).map((c) => c.id);
+  const isPreCat = (id) => preCats.indexOf(id) >= 0;
   const liveZones = (zones || []).filter(zoneValid);
 
   // Remember the area the customer checked, so the catalogue matches where they are.
@@ -948,6 +951,16 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
   const dropBlocked = () => setCart((c) => {
     const n = { ...c };
     blockedItems.forEach((x) => { delete n[x.p.id]; });
+    return n;
+  });
+
+  // pre-book goes out on its own delivery, so a basket can't hold both kinds
+  const preItems = cartItems.filter((x) => isPreCat(x.p.cat));
+  const normalItems = cartItems.filter((x) => !isPreCat(x.p.cat));
+  const mixedBasket = preItems.length > 0 && normalItems.length > 0;
+  const keepOnly = (keep) => setCart((c) => {
+    const n = { ...c };
+    (keep === "pre" ? normalItems : preItems).forEach((x) => { delete n[x.p.id]; });
     return n;
   });
 
@@ -1119,7 +1132,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         <p style={{ margin: "0 0 18px", fontSize: 13, color: "#6b675e" }}>Weights shown are gross before cleaning · net after cleaning, like-for-like with your local shop.</p>
         <div className="pgrid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(230px,1fr))", gap: 16 }}>
           {visible.map((p) => (
-            <ProductCard key={p.id} p={p} qty={cart[p.id] || 0} add={add} onOpen={() => setDetail(p)} />
+            <ProductCard key={p.id} p={p} qty={cart[p.id] || 0} add={add} pre={isPreCat(p.cat)} onOpen={() => setDetail(p)} />
           ))}
           {visible.length === 0 && <div style={{ gridColumn: "1/-1", textAlign: "center", color: "#8a857a", padding: 40 }}>No products found. Try a different search.</div>}
         </div>
@@ -1142,7 +1155,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v5.0</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v5.1</span>
         </div>
       </footer>
 
@@ -1155,7 +1168,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
       )}
 
       {areaOpen && <MapPicker initial={areaLoc} zones={zones} close={() => setAreaOpen(false)} onSave={setArea} />}
-      {detail && <DetailModal p={detail} qty={cart[detail.id] || 0} add={add} close={() => setDetail(null)} />}
+      {detail && <DetailModal p={detail} qty={cart[detail.id] || 0} add={add} pre={isPreCat(detail.cat)} close={() => setDetail(null)} />}
       {cartOpen && (
         <Drawer title="Your basket" close={() => setCartOpen(false)}>
           {cartItems.length === 0 ? (
@@ -1202,7 +1215,27 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
                   </button>
                 </div>
               )}
-              <button disabled={blockedItems.length > 0 || soldOutItems.length > 0} onClick={() => { trackStep("checkout"); setCartOpen(false); setCheckout(true); }}
+              {mixedBasket && (
+                <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 10, padding: "11px 13px", margin: "12px 0", fontSize: 13, lineHeight: 1.55 }}>
+                  <b style={{ color: "#8E6A1F" }}>Pre-book items come on their own delivery.</b>
+                  <div style={{ margin: "4px 0 9px", color: "#5c584e" }}>
+                    Pre-book: {preItems.map((x) => x.p.name).join(", ")}<br />
+                    Regular: {normalItems.map((x) => x.p.name).join(", ")}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button type="button" onClick={() => keepOnly("pre")}
+                      style={{ background: "#8E6A1F", color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontWeight: 800, fontSize: 12.5, cursor: "pointer" }}>
+                      Keep the pre-book items
+                    </button>
+                    <button type="button" onClick={() => keepOnly("normal")}
+                      style={{ background: BRAND.green, color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontWeight: 800, fontSize: 12.5, cursor: "pointer" }}>
+                      Keep the regular items
+                    </button>
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "#8a857a", marginTop: 8 }}>Order the other half separately — your basket is kept either way.</div>
+                </div>
+              )}
+              <button disabled={blockedItems.length > 0 || soldOutItems.length > 0 || mixedBasket} onClick={() => { trackStep("checkout"); setCartOpen(false); setCheckout(true); }}
                 style={{ width: "100%", marginTop: 16, background: BRAND.green, color: "#fff", border: "none", borderRadius: 12, padding: "14px", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>
                 Choose delivery slot →
               </button>
@@ -1212,7 +1245,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
       )}
       {checkout && (
         <Checkout cartItems={cartItems} subtotal={subtotal} delFee={delFee} total={total}
-          slots={slots} settings={settings} orders={orders} zones={zones} freeCats={freeCats} onAreaKnown={setArea}
+          slots={slots} settings={settings} orders={orders} zones={zones} freeCats={freeCats} preCats={preCats} onAreaKnown={setArea}
           back={() => { setCheckout(false); setCartOpen(true); }}
           done={(order) => { onPlaceOrder(order); setCart({}); setCheckout(false); setPlaced(order); }} />
       )}
@@ -1222,7 +1255,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
   );
 }
 
-function ProductCard({ p, qty, add, onOpen }) {
+function ProductCard({ p, qty, add, onOpen, pre }) {
   const off = Math.round(((p.mrp - p.price) / p.mrp) * 100);
   return (
     <div className="fadeup card" style={{ background: "#fff", borderRadius: 16, overflow: "hidden", boxShadow: "0 4px 14px rgba(94,15,24,.08)", border: "1px solid #F0E6D2", display: "flex", flexDirection: "column", opacity: p.stock ? 1 : 0.55 }}>
@@ -1230,6 +1263,7 @@ function ProductCard({ p, qty, add, onOpen }) {
         <ProductImage p={p} height={130} />
         {off > 0 && <span style={{ position: "absolute", top: 8, left: 8, background: BRAND.red, color: "#fff", fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "2px 8px", zIndex: 2 }}>{off}% OFF</span>}
         {!p.stock && <span style={{ position: "absolute", top: 8, right: 8, background: "#555", color: "#fff", fontSize: 11, borderRadius: 6, padding: "2px 8px", zIndex: 2 }}>Sold out</span>}
+        {p.stock && pre && <span style={{ position: "absolute", top: 8, right: 8, background: "#8E6A1F", color: "#fff", fontSize: 11, borderRadius: 6, padding: "2px 8px", zIndex: 2, fontWeight: 700 }}>Pre-book</span>}
       </div>
       <div style={{ padding: 12, flex: 1, display: "flex", flexDirection: "column" }}>
         <div onClick={onOpen} style={{ fontWeight: 600, fontSize: 14, cursor: "pointer", minHeight: 38 }}>{p.name}</div>
@@ -1243,7 +1277,7 @@ function ProductCard({ p, qty, add, onOpen }) {
           </div>
           {p.stock ? (
             qty === 0 ? (
-              <button onClick={() => add(p.id, 1)} style={{ background: BRAND.green, color: "#fff", border: "none", borderRadius: 999, padding: "8px 20px", fontWeight: 800, cursor: "pointer", fontSize: 13 }} className="addbtn">Add</button>
+              <button onClick={() => add(p.id, 1)} style={{ background: pre ? "#8E6A1F" : BRAND.green, color: "#fff", border: "none", borderRadius: 999, padding: "8px 20px", fontWeight: 800, cursor: "pointer", fontSize: 13 }} className="addbtn">{pre ? "Pre-book" : "Add"}</button>
             ) : <Stepper qty={qty} add={(d) => add(p.id, d)} />
           ) : <span style={{ fontSize: 12, color: "#8a857a" }}>Notify me</span>}
         </div>
@@ -1263,7 +1297,7 @@ function Stepper({ qty, add }) {
   );
 }
 
-function DetailModal({ p, qty, add, close }) {
+function DetailModal({ p, qty, add, close, pre }) {
   return (
     <Modal close={close}>
       <div style={{ borderRadius: 12, overflow: "hidden" }}><ProductImage p={p} height={170} fontSize={72} /></div>
@@ -1272,6 +1306,12 @@ function DetailModal({ p, qty, add, close }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 13, marginBottom: 14 }}>
         <Info k="Pieces" v={p.pcs} /><Info k="Gross weight" v={p.gross} /><Info k="Net weight" v={p.net} /><Info k="Price" v={rup(p.price)} />
       </div>
+      {pre && p.stock !== false && (
+        <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 10, padding: "10px 13px", fontSize: 12.5, lineHeight: 1.55, marginBottom: 12, color: "#5c584e" }}>
+          <b style={{ color: "#8E6A1F" }}>Pre-book item.</b> You choose a delivery day at checkout, and it comes
+          on its own delivery — so order it separately from fresh meat.
+        </div>
+      )}
       {p.stock === false ? (
         <div style={{ textAlign: "center", background: "#F4F0E6", border: "1px solid #DDD5C4", borderRadius: 12, padding: "14px 16px" }}>
           <div style={{ fontWeight: 800, color: "#5c584e", fontSize: 15 }}>Sold out</div>
@@ -1280,7 +1320,9 @@ function DetailModal({ p, qty, add, close }) {
           </div>
         </div>
       ) : qty === 0 ? (
-        <button onClick={() => add(p.id, 1)} style={{ width: "100%", background: BRAND.green, color: "#fff", border: "none", borderRadius: 12, padding: 13, fontWeight: 700, fontSize: 15, cursor: "pointer" }}>Add to basket — {rup(p.price)}</button>
+        <button onClick={() => add(p.id, 1)} style={{ width: "100%", background: pre ? "#8E6A1F" : BRAND.green, color: "#fff", border: "none", borderRadius: 12, padding: 13, fontWeight: 700, fontSize: 15, cursor: "pointer" }}>
+          {pre ? "Pre-book" : "Add to basket"} — {rup(p.price)}
+        </button>
       ) : (
         <div style={{ display: "flex", justifyContent: "center" }}><Stepper qty={qty} add={(d) => add(p.id, d)} /></div>
       )}
@@ -1535,7 +1577,10 @@ function MapPicker({ initial, zones, onSave, close }) {
 }
 
 /* ---------------- checkout ---------------- */
-function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders, zones, freeCats, onAreaKnown, back, done }) {
+function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders, zones, freeCats, preCats, onAreaKnown, back, done }) {
+  // a pre-book basket is delivered on a chosen future day, never today
+  const preIds = preCats || [];
+  const isPreOrder = cartItems.length > 0 && cartItems.every((x) => preIds.indexOf(x.p.cat) >= 0);
   // if anything ran out between the basket and this screen, stop here
   const soldOut = cartItems.filter((x) => x.p && x.p.stock === false);
   const activeZones = (zones || []).filter(zoneValid);
@@ -1546,6 +1591,7 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
   for (let i = 0; i < (settings.daysAhead || 14) && days.length < 8; i++) {
     const d = new Date(); d.setDate(d.getDate() + i);
     if (!allowedDays.includes(d.getDay())) continue;
+    if (isPreOrder && i === 0) continue;     // pre-book is always for a later day
     days.push({ key: dkey(d), label: i === 0 ? "Today" : d.toLocaleDateString("en-IN", { weekday: "short" }), sub: d.toLocaleDateString("en-IN", { day: "numeric", month: "short" }) });
   }
   const [day, setDay] = useState(days[0] ? days[0].key : "");
@@ -1621,7 +1667,7 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
       slotDate: shipOnly ? dkey(new Date()) : day,
       slotId: shipOnly ? "ship" : slotId,
       slotLabel: shipOnly ? ("📦 All-India courier · " + (settings.shipDays || "3 – 5 days")) : slot.label,
-      mode: shipOnly ? "ship" : "local",
+      mode: shipOnly ? "ship" : (isPreOrder ? "prebook" : "local"),
       status: "Order received", placedAt: new Date().toISOString(),
     });
     trackStep("order_placed");
