@@ -752,6 +752,21 @@ function App() {
     })();
   }, []);
 
+  // A phone can sit on the shop for an hour. Before anyone looks at their basket,
+  // re-read the catalogue so we never take an order for something already gone.
+  const refreshCatalogue = async () => {
+    try {
+      const r = await window.storage.get("huntandeat-core-v2", true);
+      const d = r ? JSON.parse(r.value) : null;
+      if (!d) return;
+      if (d.products) setProducts(d.products);
+      if (d.categories && d.categories.length) setCategories(d.categories);
+      if (d.slots) setSlots(d.slots);
+      if (d.zones) setZones(d.zones);
+      if (d.settings) setSettings({ ...DEFAULT_SETTINGS, ...d.settings });
+    } catch (e) {}   // offline: keep what we already have
+  };
+
   // customer app only ever APPENDS orders — it never edits catalog/settings
   const [custPhone, setCustPhone] = useState(() => { try { return localStorage.getItem("he-cust") || ""; } catch { return ""; } });
 
@@ -871,13 +886,13 @@ function App() {
         @keyframes fadeup { from { opacity: 0; transform: translateY(8px);} to { opacity: 1; transform: none; } }
         @media (prefers-reduced-motion: reduce) { .fadeup { animation: none; } }
       `}</style>
-      <Shop products={products} categories={categories} zones={zones} slots={slots} settings={settings} orders={orders} custPhone={custPhone} onPlaceOrder={placeOrder} />
+      <Shop products={products} categories={categories} zones={zones} slots={slots} settings={settings} orders={orders} custPhone={custPhone} onPlaceOrder={placeOrder} onRefresh={refreshCatalogue} />
     </div>
   );
 }
 
 /* ================================ SHOP ================================ */
-function Shop({ products, categories, zones, slots, settings, orders, custPhone, onPlaceOrder }) {
+function Shop({ products, categories, zones, slots, settings, orders, custPhone, onPlaceOrder, onRefresh }) {
   // Categories flagged "delivers all over India" can be ordered from anywhere.
   const freeCats = (categories || []).filter((c) => c.zoneFree).map((c) => c.id);
   const isFreeCat = (id) => freeCats.indexOf(id) >= 0;
@@ -936,12 +951,28 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
     return n;
   });
 
-  const add = (id, d) => { if (d > 0) trackStep("add_to_cart"); return setCart((c) => {
-    const q = Math.max(0, (c[id] || 0) + d);
-    const n = { ...c, [id]: q };
-    if (q === 0) delete n[id];
+  // sold out after it was added — the shop may have run out mid-session
+  const soldOutItems = cartItems.filter((x) => x.p.stock === false);
+  const dropSoldOut = () => setCart((c) => {
+    const n = { ...c };
+    soldOutItems.forEach((x) => { delete n[x.p.id]; });
     return n;
-  }); };
+  });
+
+  const add = (id, d) => {
+    // every route into the basket comes through here — card, detail popup, banner link
+    if (d > 0) {
+      const prod = products.find((x) => x.id === id);
+      if (prod && prod.stock === false) return;
+      trackStep("add_to_cart");
+    }
+    return setCart((c) => {
+      const q = Math.max(0, (c[id] || 0) + d);
+      const n = { ...c, [id]: q };
+      if (q === 0) delete n[id];
+      return n;
+    });
+  };
 
   return (
     <div>
@@ -972,7 +1003,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
               <span style={{ fontSize: 12.5, color: "#F3DCC0", fontWeight: 700, whiteSpace: "nowrap" }}>Hi, {profile.name.split(" ")[0]}</span>
             )}
             <button className="hdr-btn" onClick={() => setTrackOpen(true)} style={{ background: "transparent", border: "1.5px solid rgba(233,200,155,.55)", color: "#F3DCC0", borderRadius: 999, padding: "10px 18px", cursor: "pointer", fontSize: 13, fontWeight: 700, letterSpacing: 0.3 }}>My orders{myOrders.length ? " · " + myOrders.length : ""}</button>
-            <button className="hdr-btn" onClick={() => { trackStep("view_cart"); setCartOpen(true); }} style={{ background: "linear-gradient(180deg, #F2CE8F, #E2AE5C)", border: "none", color: "#5E0F18", borderRadius: 999, padding: "10px 20px", cursor: "pointer", fontWeight: 800, fontSize: 14, boxShadow: "0 3px 10px rgba(0,0,0,.28)" }}>
+            <button className="hdr-btn" onClick={() => { trackStep("view_cart"); if (onRefresh) onRefresh(); setCartOpen(true); }} style={{ background: "linear-gradient(180deg, #F2CE8F, #E2AE5C)", border: "none", color: "#5E0F18", borderRadius: 999, padding: "10px 20px", cursor: "pointer", fontWeight: 800, fontSize: 14, boxShadow: "0 3px 10px rgba(0,0,0,.28)" }}>
               🧺 Cart{count > 0 ? ` · ${count}` : ""}
             </button>
           </div>
@@ -1111,13 +1142,13 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v4.9</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v5.0</span>
         </div>
       </footer>
 
       {/* floating cart bar */}
       {count > 0 && !cartOpen && !checkout && !placed && (
-        <div className="cartbar" onClick={() => setCartOpen(true)} style={{ position: "fixed", bottom: 16, left: "50%", transform: "translateX(-50%)", background: BRAND.green, color: "#fff", borderRadius: 999, padding: "12px 22px", boxShadow: "0 8px 24px rgba(0,0,0,.25)", cursor: "pointer", zIndex: 40, display: "flex", gap: 14, alignItems: "center", fontWeight: 700 }}>
+        <div className="cartbar" onClick={() => { if (onRefresh) onRefresh(); setCartOpen(true); }} style={{ position: "fixed", bottom: 16, left: "50%", transform: "translateX(-50%)", background: BRAND.green, color: "#fff", borderRadius: 999, padding: "12px 22px", boxShadow: "0 8px 24px rgba(0,0,0,.25)", cursor: "pointer", zIndex: 40, display: "flex", gap: 14, alignItems: "center", fontWeight: 700 }}>
           <span>{count} item{count > 1 ? "s" : ""} · {rup(subtotal)}</span>
           <span style={{ background: BRAND.gold, color: BRAND.greenDark, borderRadius: 999, padding: "4px 14px", fontSize: 13 }}>View cart →</span>
         </div>
@@ -1161,7 +1192,17 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
                   </button>
                 </div>
               )}
-              <button disabled={blockedItems.length > 0} onClick={() => { trackStep("checkout"); setCartOpen(false); setCheckout(true); }}
+              {soldOutItems.length > 0 && (
+                <div style={{ background: "#F4F0E6", border: "1px solid #DDD5C4", borderRadius: 10, padding: "11px 13px", margin: "12px 0", fontSize: 13, lineHeight: 1.55 }}>
+                  <b style={{ color: "#5c584e" }}>Just sold out:</b>
+                  <div style={{ margin: "4px 0 9px", color: "#5c584e" }}>{soldOutItems.map((x) => x.p.name).join(", ")}</div>
+                  <button type="button" onClick={dropSoldOut}
+                    style={{ background: "#5c584e", color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontWeight: 800, fontSize: 12.5, cursor: "pointer" }}>
+                    Remove and continue
+                  </button>
+                </div>
+              )}
+              <button disabled={blockedItems.length > 0 || soldOutItems.length > 0} onClick={() => { trackStep("checkout"); setCartOpen(false); setCheckout(true); }}
                 style={{ width: "100%", marginTop: 16, background: BRAND.green, color: "#fff", border: "none", borderRadius: 12, padding: "14px", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>
                 Choose delivery slot →
               </button>
@@ -1231,7 +1272,14 @@ function DetailModal({ p, qty, add, close }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 13, marginBottom: 14 }}>
         <Info k="Pieces" v={p.pcs} /><Info k="Gross weight" v={p.gross} /><Info k="Net weight" v={p.net} /><Info k="Price" v={rup(p.price)} />
       </div>
-      {qty === 0 ? (
+      {p.stock === false ? (
+        <div style={{ textAlign: "center", background: "#F4F0E6", border: "1px solid #DDD5C4", borderRadius: 12, padding: "14px 16px" }}>
+          <div style={{ fontWeight: 800, color: "#5c584e", fontSize: 15 }}>Sold out</div>
+          <div style={{ fontSize: 12.5, color: "#8a857a", marginTop: 4, lineHeight: 1.5 }}>
+            We've run out of this one. It'll be back as soon as the next batch is ready.
+          </div>
+        </div>
+      ) : qty === 0 ? (
         <button onClick={() => add(p.id, 1)} style={{ width: "100%", background: BRAND.green, color: "#fff", border: "none", borderRadius: 12, padding: 13, fontWeight: 700, fontSize: 15, cursor: "pointer" }}>Add to basket — {rup(p.price)}</button>
       ) : (
         <div style={{ display: "flex", justifyContent: "center" }}><Stepper qty={qty} add={(d) => add(p.id, d)} /></div>
@@ -1488,6 +1536,8 @@ function MapPicker({ initial, zones, onSave, close }) {
 
 /* ---------------- checkout ---------------- */
 function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders, zones, freeCats, onAreaKnown, back, done }) {
+  // if anything ran out between the basket and this screen, stop here
+  const soldOut = cartItems.filter((x) => x.p && x.p.stock === false);
   const activeZones = (zones || []).filter(zoneValid);
   const freeIds = freeCats || [];
   const allShippable = cartItems.length > 0 && cartItems.every((x) => freeIds.indexOf(x.p.cat) >= 0);
@@ -1541,6 +1591,11 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
     if (!/^[6-9]\d{9}$/.test(ph)) return setErr("Please enter a valid 10-digit mobile number — it's required so our rider can reach you.");
     if (!form.address.trim()) return setErr("Please enter your full delivery address.");
     if (!/^\d{6}$/.test(form.pincode.trim())) return setErr("Please enter a valid 6-digit pincode.");
+    if (soldOut.length) {
+      return setErr("Sorry — " + soldOut.map((x) => x.p.name).join(", ") +
+        (soldOut.length > 1 ? " have " : " has ") + "just sold out. Please go back and remove " +
+        (soldOut.length > 1 ? "them" : "it") + " from your basket.");
+    }
     if (activeZones.length) {
       if (!form.loc) return setErr("Please set your delivery location on the map — we serve only inside our delivery area.");
       const zc = checkZones(form.loc, zones);
