@@ -366,7 +366,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v5.5</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v5.6</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -664,8 +664,26 @@ function printBulkKOT(list, brand) {
 
 function Orders({ orders, saveOrders }) {
   const [filter, setFilter] = useState("pending");
+  const [day, setDay] = useState("all");          // delivery date, not the date it was placed
   const [sel, setSel] = useState({});
-  const list = orders.filter((o) => filter === "all" ? true : filter === "pending" ? (o.status !== "Delivered" && o.status !== "Cancelled") : o.status === filter);
+
+  const byStatus = orders.filter((o) => filter === "all" ? true : filter === "pending" ? (o.status !== "Delivered" && o.status !== "Cancelled") : o.status === filter);
+
+  // every delivery date present in the current status filter, soonest first
+  const dayCounts = {};
+  byStatus.forEach((o) => { const k = o.slotDate || "—"; dayCounts[k] = (dayCounts[k] || 0) + 1; });
+  const dayKeys = Object.keys(dayCounts).sort();
+  const todayKey = dkey(new Date());
+  const dayLabel = (k) => {
+    if (k === "—") return "No date";
+    if (k === todayKey) return "Today";
+    const d = new Date(k + "T00:00:00");
+    const t2 = new Date(); t2.setDate(t2.getDate() + 1);
+    if (k === dkey(t2)) return "Tomorrow";
+    return d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
+  };
+
+  const list = day === "all" ? byStatus : byStatus.filter((o) => (o.slotDate || "—") === day);
   const setStatus = (id, status) => saveOrders(orders.map((o) => (o.id === id ? { ...o, status } : o)));
   const chosen = list.filter((o) => sel[o.id]);
   const allOn = list.length > 0 && list.every((o) => sel[o.id]);
@@ -691,6 +709,27 @@ function Orders({ orders, saveOrders }) {
           <button key={f} onClick={() => setFilter(f)} style={{ background: filter === f ? BRAND.red : "#fff", color: filter === f ? "#fff" : BRAND.ink, border: "1px solid #e5dfd0", borderRadius: 999, padding: "5px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{f}</button>
         ))}
       </div>
+      {dayKeys.length > 0 && (
+        <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+          <span style={{ fontSize: 11.5, color: "#8a857a", fontWeight: 700, marginRight: 2 }}>DELIVERY DAY</span>
+          <button onClick={() => setDay("all")}
+            style={{ background: day === "all" ? "#241E1A" : "#fff", color: day === "all" ? "#fff" : BRAND.ink, border: "1px solid #e5dfd0", borderRadius: 999, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+            All days ({byStatus.length})
+          </button>
+          {dayKeys.map((k) => (
+            <button key={k} onClick={() => setDay(k)}
+              style={{ background: day === k ? "#241E1A" : "#fff", color: day === k ? "#fff" : BRAND.ink, border: "1px solid " + (k === todayKey ? BRAND.red : "#e5dfd0"), borderRadius: 999, padding: "5px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+              {dayLabel(k)} <b>({dayCounts[k]})</b>
+            </button>
+          ))}
+          {day !== "all" && (
+            <span style={{ fontSize: 11.5, color: "#8a857a" }}>
+              — bulk actions below apply to this day only
+            </span>
+          )}
+        </div>
+      )}
+
       {list.length > 0 && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: chosen.length ? "#FDF0EE" : "#fff", border: "1.5px solid " + (chosen.length ? BRAND.red : "#EDE7DA"), borderRadius: 10, padding: "10px 14px", marginBottom: 12, position: "sticky", top: 0, zIndex: 5 }}>
           <label style={{ display: "flex", gap: 7, alignItems: "center", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
