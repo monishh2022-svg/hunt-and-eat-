@@ -851,6 +851,22 @@ function App() {
           .p-price { font-size: 15px !important; }
           .cartbar { max-width: 94vw; font-size: 13.5px; padding: 11px 16px !important; }
         }
+        /* ---- order confirmation ---- */
+        .ok-pop { animation: ok-pop .42s cubic-bezier(.2,1.3,.4,1) both; }
+        @keyframes ok-pop { from { opacity: 0; transform: scale(.88); } to { opacity: 1; transform: scale(1); } }
+        .wa-cta { animation: wa-glow 1.9s ease-in-out infinite; }
+        @keyframes wa-glow {
+          0%, 100% { box-shadow: 0 6px 18px rgba(31,168,85,.38); transform: translateY(0); }
+          50%      { box-shadow: 0 10px 30px rgba(31,168,85,.62); transform: translateY(-2px); }
+        }
+        .wa-cta:hover { filter: brightness(1.06); }
+        .ok-tick { animation: ok-tick .5s ease .1s both; display: inline-block; }
+        @keyframes ok-tick { 0% { transform: scale(.3) rotate(-18deg); opacity: 0; }
+                             60% { transform: scale(1.18) rotate(4deg); opacity: 1; }
+                             100% { transform: scale(1) rotate(0); } }
+        @media (prefers-reduced-motion: reduce) {
+          .ok-pop, .wa-cta, .ok-tick { animation: none; }
+        }
         /* ---- round category tiles ---- */
         .catgrid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 20px 10px; }
         .cattile { background: none; border: none; padding: 0; cursor: pointer; display: flex; flex-direction: column;
@@ -1209,7 +1225,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v5.5</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v5.7</span>
         </div>
       </footer>
 
@@ -1944,8 +1960,8 @@ function Success({ order, settings, close }) {
   );
   return (
     <Modal close={close}>
-      <div style={{ textAlign: "center" }}>
-        <div style={{ fontSize: 56 }}>✅</div>
+      <div className="ok-pop" style={{ textAlign: "center" }}>
+        <div className="ok-tick" style={{ fontSize: 56 }}>✅</div>
         <h3 className="display" style={{ fontWeight: 800, fontSize: 22, margin: "8px 0 4px" }}>Order placed!</h3>
         <div style={{ fontSize: 14, color: "#5c584e" }}>Order ID</div>
         <div className="display" style={{ fontSize: 26, fontWeight: 800, color: BRAND.green, letterSpacing: 1 }}>{order.id}</div>
@@ -1954,12 +1970,20 @@ function Success({ order, settings, close }) {
           <Row l="Payment" r={order.pay === "cod" ? "Cash on delivery" : "UPI on delivery"} />
           <Row l={<b>To pay</b>} r={<b>{rup(order.total)}</b>} />
         </div>
-        <a href={`https://wa.me/91${waNumber}?text=${waText}`} target="_blank" rel="noreferrer"
-          style={{ display: "block", background: "#1FA855", color: "#fff", borderRadius: 12, padding: 13, fontWeight: 700, fontSize: 15, textDecoration: "none", marginBottom: 10 }}>
-          📲 Confirm on WhatsApp
-        </a>
-        <p style={{ fontSize: 12, color: "#8a857a", margin: "0 0 10px" }}>Tap above to send your order to our kitchen on WhatsApp — this confirms it fastest.</p>
-        <button onClick={close} style={{ width: "100%", background: BRAND.green, color: "#fff", border: "none", borderRadius: 12, padding: 13, fontWeight: 700, fontSize: 15, cursor: "pointer" }}>Continue shopping</button>
+        <div style={{ background: "#EAF6EE", border: "2px solid #1FA855", borderRadius: 14, padding: "14px 13px 13px", marginBottom: 12 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 800, color: "#15713B", letterSpacing: 1.2, marginBottom: 9 }}>
+            ONE LAST STEP
+          </div>
+          <a className="wa-cta" href={`https://wa.me/91${waNumber}?text=${waText}`} target="_blank" rel="noreferrer"
+            style={{ display: "block", background: "linear-gradient(180deg,#25C063,#1FA855)", color: "#fff", borderRadius: 12,
+              padding: "16px 14px", fontWeight: 800, fontSize: 16.5, textDecoration: "none", letterSpacing: 0.2 }}>
+            📲 Confirm on WhatsApp →
+          </a>
+          <p style={{ fontSize: 12.5, color: "#3f5c4a", margin: "10px 2px 0", lineHeight: 1.55 }}>
+            Tap to send your order straight to our kitchen. <b>We start cutting once you confirm</b> — it is the fastest way to reach us.
+          </p>
+        </div>
+        <button onClick={close} style={{ width: "100%", background: "#fff", color: "#6b675e", border: "1.5px solid #E0D7C4", borderRadius: 12, padding: 12, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>Continue shopping</button>
       </div>
     </Modal>
   );
