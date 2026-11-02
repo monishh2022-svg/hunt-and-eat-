@@ -366,7 +366,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v5.7</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v5.9</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -697,7 +697,20 @@ function Orders({ orders, saveOrders }) {
     return d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
   };
 
-  const list = day === "all" ? byStatus : byStatus.filter((o) => (o.slotDate || "—") === day);
+  // a from/to range, same idea as the Visitors and Sessions tabs
+  const [cFrom, setCFrom] = useState(dkey(new Date()));
+  const [cTo, setCTo] = useState(shiftKey(30));
+  const inRange = (o) => {
+    const k = o.slotDate || "";
+    if (!k) return false;
+    return (!cFrom || k >= cFrom) && (!cTo || k <= cTo);
+  };
+  const rangeCount = byStatus.filter(inRange).length;
+  const rangeBad = cFrom && cTo && cTo < cFrom;
+
+  const list = day === "all" ? byStatus
+    : day === "custom" ? byStatus.filter(inRange)
+    : byStatus.filter((o) => (o.slotDate || "—") === day);
   const setStatus = (id, status) => saveOrders(orders.map((o) => (o.id === id ? { ...o, status } : o)));
   const chosen = list.filter((o) => sel[o.id]);
   const allOn = list.length > 0 && list.every((o) => sel[o.id]);
@@ -736,11 +749,41 @@ function Orders({ orders, saveOrders }) {
               {dayLabel(k)} <b>({dayCounts[k]})</b>
             </button>
           ))}
-          {day !== "all" && (
+          <button onClick={() => setDay("custom")}
+            style={{ background: day === "custom" ? "#241E1A" : "#fff", color: day === "custom" ? "#fff" : BRAND.ink, border: "1px solid #e5dfd0", borderRadius: 999, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+            📅 Custom dates{day === "custom" ? " (" + rangeCount + ")" : "…"}
+          </button>
+
+          {day === "custom" && (
+            <span style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <input type="date" value={cFrom} max={cTo || undefined} onChange={(e) => setCFrom(e.target.value)}
+                style={{ ...inp, width: "auto", padding: "4px 9px", fontSize: 12.5 }} />
+              <span style={{ fontSize: 12.5, color: "#6b675e" }}>to</span>
+              <input type="date" value={cTo} min={cFrom || undefined} onChange={(e) => setCTo(e.target.value)}
+                style={{ ...inp, width: "auto", padding: "4px 9px", fontSize: 12.5 }} />
+              <button onClick={() => { setCFrom(dkey(new Date())); setCTo(shiftKey(30)); }}
+                style={{ background: "none", border: "none", color: "#8a857a", fontSize: 11.5, textDecoration: "underline", cursor: "pointer" }}>
+                reset
+              </button>
+            </span>
+          )}
+
+          {day !== "all" && day !== "custom" && (
             <span style={{ fontSize: 11.5, color: "#8a857a" }}>
               — bulk actions below apply to this day only
             </span>
           )}
+        </div>
+      )}
+
+      {day === "custom" && rangeBad && (
+        <div style={{ background: "#FBE9E7", border: "1px solid #F0C0BA", borderRadius: 10, padding: "9px 13px", fontSize: 12.5, marginBottom: 12, color: BRAND.danger, fontWeight: 700 }}>
+          The &ldquo;to&rdquo; date is before the &ldquo;from&rdquo; date — swap them to see orders.
+        </div>
+      )}
+      {day === "custom" && !rangeBad && (
+        <div style={{ fontSize: 12, color: "#8a857a", marginBottom: 12 }}>
+          Showing <b>{rangeCount}</b> order{rangeCount === 1 ? "" : "s"} delivering between <b>{cFrom || "any date"}</b> and <b>{cTo || "any date"}</b> — bulk actions apply to these only.
         </div>
       )}
 
