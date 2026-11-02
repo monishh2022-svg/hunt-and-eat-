@@ -751,6 +751,7 @@ function App() {
   const [slots, setSlots] = useState(DEFAULT_SLOTS);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [orders, setOrders] = useState([]);
+  const [reviews, setReviews] = useState([]);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => { trackVisit(TRACK_NS); trackStep("visit"); startSession(); }, []);
@@ -774,6 +775,7 @@ function App() {
       }
       const ord = await loadKey("huntandeat-orders", []);
       setOrders(ord);
+      try { setReviews(await loadKey("huntandeat-reviews", []) || []); } catch (e) {}
       setLoaded(true);
     })();
   }, []);
@@ -791,6 +793,17 @@ function App() {
       if (d.zones) setZones(d.zones);
       if (d.settings) setSettings({ ...DEFAULT_SETTINGS, ...d.settings });
     } catch (e) {}   // offline: keep what we already have
+  };
+
+  // one rating per order — a second one from the same customer replaces the first
+  const saveReview = async (r) => {
+    try {
+      const latest = (await loadKey("huntandeat-reviews", [])) || [];
+      const next = latest.filter((x) => x.orderId !== r.orderId).concat([r]);
+      await saveKey("huntandeat-reviews", next);
+      setReviews(next);
+      return true;
+    } catch (e) { return false; }
   };
 
   // customer app only ever APPENDS orders — it never edits catalog/settings
@@ -928,13 +941,13 @@ function App() {
         @keyframes fadeup { from { opacity: 0; transform: translateY(8px);} to { opacity: 1; transform: none; } }
         @media (prefers-reduced-motion: reduce) { .fadeup { animation: none; } }
       `}</style>
-      <Shop products={products} categories={categories} zones={zones} slots={slots} settings={settings} orders={orders} custPhone={custPhone} onPlaceOrder={placeOrder} onRefresh={refreshCatalogue} />
+      <Shop products={products} categories={categories} zones={zones} slots={slots} settings={settings} orders={orders} custPhone={custPhone} onPlaceOrder={placeOrder} onRefresh={refreshCatalogue} reviews={reviews} onRate={saveReview} />
     </div>
   );
 }
 
 /* ================================ SHOP ================================ */
-function Shop({ products, categories, zones, slots, settings, orders, custPhone, onPlaceOrder, onRefresh }) {
+function Shop({ products, categories, zones, slots, settings, orders, custPhone, onPlaceOrder, onRefresh, reviews, onRate }) {
   // Categories flagged "delivers all over India" can be ordered from anywhere.
   const freeCats = (categories || []).filter((c) => c.zoneFree).map((c) => c.id);
   const isFreeCat = (id) => freeCats.indexOf(id) >= 0;
@@ -1125,6 +1138,45 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         </div>
       </section>
 
+      {/* what customers said */}
+      {(() => {
+        const shown = (reviews || []).filter((r) => !r.hidden && r.stars);
+        if (shown.length < 1) return null;
+        const avg = shown.reduce((s, r) => s + r.stars, 0) / shown.length;
+        const withText = shown.filter((r) => r.text).sort((a2, b2) => b2.at - a2.at).slice(0, 6);
+        return (
+          <section style={{ maxWidth: 1100, margin: "0 auto", padding: "4px 16px 10px" }}>
+            <div style={{ background: "#fff", border: "1px solid #EDE7DA", borderRadius: 16, padding: "16px 18px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: withText.length ? 14 : 0 }}>
+                <span className="display" style={{ fontSize: 30, fontWeight: 800, color: BRAND.ink, lineHeight: 1 }}>
+                  {avg.toFixed(1)}
+                </span>
+                <span>
+                  <Stars value={Math.round(avg)} size={18} />
+                  <div style={{ fontSize: 12.5, color: "#6b675e", marginTop: 2 }}>
+                    from {shown.length} customer{shown.length > 1 ? "s" : ""} who ordered
+                  </div>
+                </span>
+              </div>
+              {withText.length > 0 && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(250px,1fr))", gap: 12 }}>
+                  {withText.map((r) => (
+                    <div key={r.id} style={{ background: "#FDFBF6", border: "1px solid #F0E9DA", borderRadius: 12, padding: "12px 13px" }}>
+                      <Stars value={r.stars} size={14} />
+                      <div style={{ fontSize: 13, color: "#3A2F22", lineHeight: 1.55, margin: "7px 0 8px" }}>&ldquo;{r.text}&rdquo;</div>
+                      <div style={{ fontSize: 11.5, color: "#8a857a", fontWeight: 700 }}>
+                        {(r.name || "A customer").split(" ")[0]}
+                        {r.items && r.items.length ? " · " + r.items[0] : ""}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        );
+      })()}
+
       {/* categories — round photo tiles */}
       <section style={{ maxWidth: 1100, margin: "0 auto", padding: "26px 16px 4px" }}>
         <h2 className="display cat-head" style={{ fontSize: 25, fontWeight: 800, margin: "0 0 3px", letterSpacing: "-.01em" }}>
@@ -1250,7 +1302,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v5.8</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v6.0</span>
         </div>
       </footer>
 
@@ -1345,7 +1397,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
           done={(order) => { onPlaceOrder(order); setCart({}); setCheckout(false); setPlaced(order); }} />
       )}
       {placed && <Success order={placed} settings={settings} close={() => setPlaced(null)} />}
-      {trackOpen && <Track orders={orders} settings={settings} close={() => setTrackOpen(false)} />}
+      {trackOpen && <Track orders={orders} settings={settings} reviews={reviews} onRate={onRate} close={() => setTrackOpen(false)} />}
     </div>
   );
 }
@@ -2032,7 +2084,117 @@ function Success({ order, settings, close }) {
   );
 }
 
-function Track({ orders, settings, close }) {
+/* ---------------------------------------------------------------------
+   Ratings. Only a customer with a DELIVERED order can leave one, and
+   only once per order — so every star on the site came from someone
+   who actually received food.
+--------------------------------------------------------------------- */
+function Stars({ value, size, onPick }) {
+  const [hover, setHover] = useState(0);
+  const show = hover || value || 0;
+  return (
+    <span style={{ display: "inline-flex", gap: size > 20 ? 4 : 2 }}>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <span key={n}
+          onClick={onPick ? () => onPick(n) : undefined}
+          onMouseEnter={onPick ? () => setHover(n) : undefined}
+          onMouseLeave={onPick ? () => setHover(0) : undefined}
+          role={onPick ? "button" : undefined}
+          aria-label={onPick ? n + " star" + (n > 1 ? "s" : "") : undefined}
+          style={{ fontSize: size || 16, lineHeight: 1, cursor: onPick ? "pointer" : "default",
+            color: n <= show ? "#E8A317" : "#DAD3C4", userSelect: "none",
+            transition: "transform .12s ease", transform: onPick && n <= hover ? "scale(1.18)" : "none" }}>
+          ★
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function RateOrder({ order, existing, onSave }) {
+  const [open, setOpen] = useState(false);
+  const [stars, setStars] = useState(existing ? existing.stars : 0);
+  const [text, setText] = useState(existing ? existing.text || "" : "");
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const [err, setErr] = useState("");
+
+  if (existing && !open) {
+    return (
+      <div style={{ borderTop: "1px dashed #E5DFD0", marginTop: 10, paddingTop: 10 }}>
+        <div style={{ fontSize: 12.5, color: "#5c584e", marginBottom: 4 }}>You rated this order</div>
+        <Stars value={existing.stars} size={19} />
+        {existing.text && <div style={{ fontSize: 12.5, color: "#6b675e", marginTop: 5, fontStyle: "italic" }}>&ldquo;{existing.text}&rdquo;</div>}
+        <button onClick={() => setOpen(true)}
+          style={{ background: "none", border: "none", color: BRAND.green, fontSize: 12, fontWeight: 700, cursor: "pointer", padding: "6px 0 0", textDecoration: "underline" }}>
+          Change my rating
+        </button>
+      </div>
+    );
+  }
+
+  if (done) {
+    return (
+      <div style={{ borderTop: "1px dashed #E5DFD0", marginTop: 10, paddingTop: 10, background: "#EAF6EE", borderRadius: 9, padding: "11px 12px", fontSize: 13, color: "#177245", fontWeight: 700 }}>
+        🙏 Thank you — your rating helps us and helps other families decide.
+      </div>
+    );
+  }
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)}
+        style={{ width: "100%", marginTop: 10, background: "#FFF6E5", border: "1.5px solid #E8A317", color: "#8E6A1F",
+          borderRadius: 10, padding: "11px 12px", fontWeight: 800, fontSize: 13.5, cursor: "pointer" }}>
+        ★ Rate this order
+      </button>
+    );
+  }
+
+  const send = async () => {
+    if (!stars) return setErr("Tap a star first — how was it?");
+    setBusy(true); setErr("");
+    const ok = await onSave({
+      id: "r" + order.id,
+      orderId: order.id,
+      phone: (order.phone || "").replace(/\D/g, "").slice(-10),
+      name: order.name || "",
+      stars: stars,
+      text: text.trim().slice(0, 400),
+      items: (order.items || []).map((i) => i.name).slice(0, 4),
+      at: Date.now(),
+    });
+    setBusy(false);
+    if (ok) setDone(true);
+    else setErr("Couldn't save that just now — please check your internet and try again.");
+  };
+
+  return (
+    <div style={{ borderTop: "1px dashed #E5DFD0", marginTop: 10, paddingTop: 12 }}>
+      <div style={{ fontWeight: 800, fontSize: 13.5, marginBottom: 7 }}>How was this order?</div>
+      <Stars value={stars} size={30} onPick={setStars} />
+      <div style={{ fontSize: 12, color: "#8a857a", margin: "6px 0 9px" }}>
+        {["", "Not good", "Could be better", "It was fine", "Good", "Excellent"][stars] || "Tap a star"}
+      </div>
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3}
+        placeholder="Anything you'd like to tell us? (optional)"
+        style={{ width: "100%", padding: "9px 11px", borderRadius: 9, border: "1.5px solid #e5dfd0", fontSize: 13.5, boxSizing: "border-box", fontFamily: "inherit", resize: "vertical" }} />
+      {err && <div style={{ color: BRAND.red, fontSize: 12.5, fontWeight: 700, marginTop: 6 }}>{err}</div>}
+      <div style={{ display: "flex", gap: 8, marginTop: 9 }}>
+        <button onClick={send} disabled={busy}
+          style={{ flex: 1, background: busy ? "#CFC9BD" : BRAND.green, color: "#fff", border: "none", borderRadius: 9, padding: "11px 0", fontWeight: 800, fontSize: 13.5, cursor: busy ? "wait" : "pointer" }}>
+          {busy ? "Sending…" : "Send rating"}
+        </button>
+        <button onClick={() => setOpen(false)}
+          style={{ background: "#fff", border: "1.5px solid #E0D7C4", color: "#6b675e", borderRadius: 9, padding: "11px 16px", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+          Not now
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Track({ orders, settings, close, reviews, onRate }) {
   const savedPhone = (() => { try { return localStorage.getItem("he-cust") || ""; } catch { return ""; } })();
   const [q, setQ] = useState(savedPhone);
   const [list, setList] = useState(null);
@@ -2175,6 +2337,9 @@ function Track({ orders, settings, close }) {
                           📞 Call us
                         </a>
                       </div>
+                      {o.status === "Delivered" && onRate && (
+                        <RateOrder order={o} existing={(reviews || []).find((r) => r.orderId === o.id)} onSave={onRate} />
+                      )}
                     </div>
                   )}
                 </div>
