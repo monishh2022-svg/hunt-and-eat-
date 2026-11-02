@@ -366,7 +366,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v5.6</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v5.7</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -662,6 +662,20 @@ function printBulkKOT(list, brand) {
   w.document.write(html); w.document.close(); w.focus();
 }
 
+function placedWhen(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  const mins = Math.round((Date.now() - d.getTime()) / 60000);
+  let ago;
+  if (mins < 1) ago = "just now";
+  else if (mins < 60) ago = mins + " min ago";
+  else if (mins < 1440) ago = Math.round(mins / 60) + " hr ago";
+  else ago = Math.round(mins / 1440) + " day" + (Math.round(mins / 1440) > 1 ? "s" : "") + " ago";
+  const when = d.toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", hour12: true });
+  return { when: when, ago: ago, fresh: mins < 120 };
+}
+
 function Orders({ orders, saveOrders }) {
   const [filter, setFilter] = useState("pending");
   const [day, setDay] = useState("all");          // delivery date, not the date it was placed
@@ -773,6 +787,18 @@ function Orders({ orders, saveOrders }) {
                 <input type="checkbox" checked={!!sel[o.id]} onChange={() => toggle(o.id)} style={{ width: 17, height: 17, cursor: "pointer" }} />
                 <span className="display" style={{ fontWeight: 800 }}>{o.id}</span>
                 <span style={{ fontSize: 12, color: "#8a857a", marginLeft: 8 }}>{o.slotDate} · {o.slotLabel}</span>
+                {(() => {
+                  const w = placedWhen(o.placedAt);
+                  if (!w) return null;
+                  return (
+                    <span title={"Order received " + w.when}
+                      style={{ fontSize: 11.5, fontWeight: 700, marginLeft: 8, borderRadius: 999, padding: "2px 10px",
+                        background: w.fresh ? "#EAF6EE" : "#F4F0E6", color: w.fresh ? "#1D6B3F" : "#6b675e",
+                        border: "1px solid " + (w.fresh ? "#BEDFC8" : "#E5DFD0") }}>
+                      🕒 Received {w.when} · {w.ago}
+                    </span>
+                  );
+                })()}
                 {o.mode === "prebook" && (
                   <span style={{ marginLeft: 8, background: "#FFF6E5", border: "1px solid #EAD9A8", color: "#8E6A1F", borderRadius: 999, padding: "2px 10px", fontSize: 11, fontWeight: 800 }}>
                     📅 PRE-BOOK
