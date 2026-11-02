@@ -356,7 +356,7 @@ function AdminApp() {
   const revenue = active.filter((o) => o.status === "Delivered").reduce((s, o) => s + o.total, 0);
   const todayRevenue = todays.reduce((s, o) => s + o.total, 0);
 
-  const tabs = [["dash", "📊 Dashboard"], ["orders", `📦 Orders${newOrders ? ` (+${newOrders} new)` : ""}`], ["menu", "🍗 Menu"], ["banners", "🖼️ Banners"], ["customers", "👥 Customers"], ["visits", "📈 Visitors"], ["sessions", "🎥 Sessions"], ["demand", "📍 Demand map"], ["riders", "🛵 Riders"], ["cash", "💰 Cash"], ["slots", "🕐 Slots"], ["settings", "⚙️ Settings"]];
+  const tabs = [["dash", "📊 Dashboard"], ["orders", `📦 Orders${newOrders ? ` (+${newOrders} new)` : ""}`], ["menu", "🍗 Menu"], ["banners", "🖼️ Banners"], ["reviews", "⭐ Reviews"], ["customers", "👥 Customers"], ["visits", "📈 Visitors"], ["sessions", "🎥 Sessions"], ["demand", "📍 Demand map"], ["riders", "🛵 Riders"], ["cash", "💰 Cash"], ["slots", "🕐 Slots"], ["settings", "⚙️ Settings"]];
 
   return (
     <Shell>
@@ -366,7 +366,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v5.9</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v6.1</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -455,6 +455,7 @@ function AdminApp() {
         {tab === "orders" && <Orders orders={orders} saveOrders={saveOrders} />}
         {tab === "menu" && <Menu products={products} cats={categories} save={(p) => saveCore({ products: p })} saveCats={(c) => saveCore({ categories: c })} />}
         {tab === "banners" && <BannersTab settings={settings} cats={categories} products={products} save={(s) => saveCore({ settings: s })} />}
+        {tab === "reviews" && <Reviews />}
         {tab === "customers" && <Customers orders={orders} />}
         {tab === "visits" && <Visitors orders={orders} />}
         {tab === "sessions" && <Sessions />}
@@ -662,6 +663,16 @@ function printBulkKOT(list, brand) {
   w.document.write(html); w.document.close(); w.focus();
 }
 
+/* turn "6:00 AM – 8:00 AM" into 6, "4:00 PM – 6:00 PM" into 16, so slots
+   sort by real time rather than by the first digit of their label */
+function slotHour(label) {
+  const m = String(label || "").match(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)/i);
+  if (!m) return 99;
+  let h = Number(m[1]) % 12;
+  if (/PM/i.test(m[3])) h += 12;
+  return h + Number(m[2] || 0) / 60;
+}
+
 function placedWhen(iso) {
   if (!iso) return null;
   const d = new Date(iso);
@@ -678,7 +689,9 @@ function placedWhen(iso) {
 
 function Orders({ orders, saveOrders }) {
   const [filter, setFilter] = useState("pending");
-  const [day, setDay] = useState("all");          // delivery date, not the date it was placed
+  const todayKeyInit = dkey(new Date());
+  const [day, setDay] = useState(todayKeyInit);  // today's deliveries are what you need first
+  const [sort, setSort] = useState("slot");
   const [sel, setSel] = useState({});
 
   const byStatus = orders.filter((o) => filter === "all" ? true : filter === "pending" ? (o.status !== "Delivered" && o.status !== "Cancelled") : o.status === filter);
@@ -686,16 +699,7 @@ function Orders({ orders, saveOrders }) {
   // every delivery date present in the current status filter, soonest first
   const dayCounts = {};
   byStatus.forEach((o) => { const k = o.slotDate || "—"; dayCounts[k] = (dayCounts[k] || 0) + 1; });
-  const dayKeys = Object.keys(dayCounts).sort();
   const todayKey = dkey(new Date());
-  const dayLabel = (k) => {
-    if (k === "—") return "No date";
-    if (k === todayKey) return "Today";
-    const d = new Date(k + "T00:00:00");
-    const t2 = new Date(); t2.setDate(t2.getDate() + 1);
-    if (k === dkey(t2)) return "Tomorrow";
-    return d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
-  };
 
   // a from/to range, same idea as the Visitors and Sessions tabs
   const [cFrom, setCFrom] = useState(dkey(new Date()));
@@ -708,9 +712,22 @@ function Orders({ orders, saveOrders }) {
   const rangeCount = byStatus.filter(inRange).length;
   const rangeBad = cFrom && cTo && cTo < cFrom;
 
-  const list = day === "all" ? byStatus
+  const filtered = day === "all" ? byStatus
     : day === "custom" ? byStatus.filter(inRange)
     : byStatus.filter((o) => (o.slotDate || "—") === day);
+
+  const nameOf = (o) => (o.name || "").trim().toLowerCase();
+  const list = filtered.slice().sort((a, b) => {
+    if (sort === "az") return nameOf(a) < nameOf(b) ? -1 : nameOf(a) > nameOf(b) ? 1 : 0;
+    if (sort === "za") return nameOf(a) > nameOf(b) ? -1 : nameOf(a) < nameOf(b) ? 1 : 0;
+    if (sort === "new") return (b.placedAt || "") < (a.placedAt || "") ? -1 : 1;
+    if (sort === "old") return (a.placedAt || "") < (b.placedAt || "") ? -1 : 1;
+    if (sort === "high") return (b.total || 0) - (a.total || 0);
+    // default: by delivery day, then by the real clock time of the slot
+    const d = (a.slotDate || "").localeCompare(b.slotDate || "");
+    if (d !== 0) return d;
+    return slotHour(a.slotLabel) - slotHour(b.slotLabel);
+  });
   const setStatus = (id, status) => saveOrders(orders.map((o) => (o.id === id ? { ...o, status } : o)));
   const chosen = list.filter((o) => sel[o.id]);
   const allOn = list.length > 0 && list.every((o) => sel[o.id]);
@@ -736,43 +753,58 @@ function Orders({ orders, saveOrders }) {
           <button key={f} onClick={() => setFilter(f)} style={{ background: filter === f ? BRAND.red : "#fff", color: filter === f ? "#fff" : BRAND.ink, border: "1px solid #e5dfd0", borderRadius: 999, padding: "5px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{f}</button>
         ))}
       </div>
-      {dayKeys.length > 0 && (
-        <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
-          <span style={{ fontSize: 11.5, color: "#8a857a", fontWeight: 700, marginRight: 2 }}>DELIVERY DAY</span>
-          <button onClick={() => setDay("all")}
-            style={{ background: day === "all" ? "#241E1A" : "#fff", color: day === "all" ? "#fff" : BRAND.ink, border: "1px solid #e5dfd0", borderRadius: 999, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-            All days ({byStatus.length})
-          </button>
-          {dayKeys.map((k) => (
-            <button key={k} onClick={() => setDay(k)}
-              style={{ background: day === k ? "#241E1A" : "#fff", color: day === k ? "#fff" : BRAND.ink, border: "1px solid " + (k === todayKey ? BRAND.red : "#e5dfd0"), borderRadius: 999, padding: "5px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-              {dayLabel(k)} <b>({dayCounts[k]})</b>
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: 11.5, color: "#8a857a", fontWeight: 700, marginRight: 2 }}>SHOWING</span>
+
+        <button onClick={() => setDay(todayKey)}
+          style={{ background: day === todayKey ? "#241E1A" : "#fff", color: day === todayKey ? "#fff" : BRAND.ink,
+            border: "1px solid " + (day === todayKey ? "#241E1A" : BRAND.red), borderRadius: 999, padding: "6px 15px", fontSize: 12.5, fontWeight: 800, cursor: "pointer" }}>
+          Today ({dayCounts[todayKey] || 0})
+        </button>
+
+        <button onClick={() => setDay("all")}
+          style={{ background: day === "all" ? "#241E1A" : "#fff", color: day === "all" ? "#fff" : BRAND.ink, border: "1px solid #e5dfd0", borderRadius: 999, padding: "6px 15px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+          All days ({byStatus.length})
+        </button>
+
+        <button onClick={() => setDay("custom")}
+          style={{ background: day === "custom" ? "#241E1A" : "#fff", color: day === "custom" ? "#fff" : BRAND.ink, border: "1px solid #e5dfd0", borderRadius: 999, padding: "6px 15px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+          📅 Pick dates{day === "custom" ? " (" + rangeCount + ")" : "…"}
+        </button>
+
+        {day === "custom" && (
+          <span style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            <input type="date" value={cFrom} max={cTo || undefined} onChange={(e) => setCFrom(e.target.value)}
+              style={{ ...inp, width: "auto", padding: "4px 9px", fontSize: 12.5 }} />
+            <span style={{ fontSize: 12.5, color: "#6b675e" }}>to</span>
+            <input type="date" value={cTo} min={cFrom || undefined} onChange={(e) => setCTo(e.target.value)}
+              style={{ ...inp, width: "auto", padding: "4px 9px", fontSize: 12.5 }} />
+            <button onClick={() => { setCFrom(dkey(new Date())); setCTo(shiftKey(30)); }}
+              style={{ background: "none", border: "none", color: "#8a857a", fontSize: 11.5, textDecoration: "underline", cursor: "pointer" }}>
+              reset
             </button>
-          ))}
-          <button onClick={() => setDay("custom")}
-            style={{ background: day === "custom" ? "#241E1A" : "#fff", color: day === "custom" ? "#fff" : BRAND.ink, border: "1px solid #e5dfd0", borderRadius: 999, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-            📅 Custom dates{day === "custom" ? " (" + rangeCount + ")" : "…"}
-          </button>
+          </span>
+        )}
 
-          {day === "custom" && (
-            <span style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-              <input type="date" value={cFrom} max={cTo || undefined} onChange={(e) => setCFrom(e.target.value)}
-                style={{ ...inp, width: "auto", padding: "4px 9px", fontSize: 12.5 }} />
-              <span style={{ fontSize: 12.5, color: "#6b675e" }}>to</span>
-              <input type="date" value={cTo} min={cFrom || undefined} onChange={(e) => setCTo(e.target.value)}
-                style={{ ...inp, width: "auto", padding: "4px 9px", fontSize: 12.5 }} />
-              <button onClick={() => { setCFrom(dkey(new Date())); setCTo(shiftKey(30)); }}
-                style={{ background: "none", border: "none", color: "#8a857a", fontSize: 11.5, textDecoration: "underline", cursor: "pointer" }}>
-                reset
-              </button>
-            </span>
-          )}
+        <span style={{ marginLeft: "auto", display: "inline-flex", gap: 6, alignItems: "center" }}>
+          <span style={{ fontSize: 11.5, color: "#8a857a", fontWeight: 700 }}>SORT</span>
+          <select value={sort} onChange={(e) => setSort(e.target.value)}
+            style={{ ...inp, width: "auto", padding: "5px 9px", fontSize: 12.5, fontWeight: 700 }}>
+            <option value="slot">Delivery time</option>
+            <option value="az">Name A → Z</option>
+            <option value="za">Name Z → A</option>
+            <option value="new">Newest order first</option>
+            <option value="old">Oldest order first</option>
+            <option value="high">Biggest amount first</option>
+          </select>
+        </span>
+      </div>
 
-          {day !== "all" && day !== "custom" && (
-            <span style={{ fontSize: 11.5, color: "#8a857a" }}>
-              — bulk actions below apply to this day only
-            </span>
-          )}
+      {day !== "custom" && day !== "all" && (
+        <div style={{ fontSize: 12, color: "#8a857a", marginBottom: 12 }}>
+          {(dayCounts[todayKey] || 0) === 0
+            ? "No deliveries scheduled for today — tap All days or Pick dates to see the rest."
+            : "Today's deliveries only — bulk actions apply to these."}
         </div>
       )}
 
@@ -2492,6 +2524,126 @@ function ZoneTools({ map, points, onPoints }) {
 
       {msg && <div style={{ fontSize: 12, color: "#6b675e", marginTop: 7, lineHeight: 1.5 }}>{msg}</div>}
     </div>
+  );
+}
+
+/* =====================================================================
+   REVIEWS — what customers said after delivery. One per order, and only
+   a customer with a delivered order can leave one.
+===================================================================== */
+function AdminStars({ n, size }) {
+  return (
+    <span style={{ display: "inline-flex", gap: 1.5 }}>
+      {[1,2,3,4,5].map((i) => (
+        <span key={i} style={{ fontSize: size || 15, color: i <= n ? "#E8A317" : "#DAD3C4", lineHeight: 1 }}>★</span>
+      ))}
+    </span>
+  );
+}
+
+function Reviews() {
+  const [list, setList] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [filter, setFilter] = useState("all");
+
+  const load = async () => {
+    setBusy(true);
+    try { setList((await loadKey("huntandeat-reviews", [])) || []); }
+    catch (e) { setList("err"); }
+    setBusy(false);
+  };
+  useEffect(() => { load(); }, []);
+
+  const save = async (next) => {
+    setList(next);
+    const ok = await saveKey("huntandeat-reviews", next);
+    if (!ok) alert("⚠️ That change did not reach the database. Please try again.");
+  };
+  const toggleHide = (id) => save(list.map((r) => (r.id === id ? { ...r, hidden: !r.hidden } : r)));
+  const remove = (id) => { if (window.confirm("Delete this review for good?")) save(list.filter((r) => r.id !== id)); };
+
+  if (list === "err") return <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 10, padding: 14, fontSize: 13.5 }}>Couldn't read reviews — check the database connection.</div>;
+  if (!list) return <div style={{ color: "#8a857a", padding: 20 }}>Loading reviews…</div>;
+
+  const live = list.filter((r) => !r.hidden);
+  const avg = live.length ? live.reduce((s, r) => s + (r.stars || 0), 0) / live.length : 0;
+  const spread = [5,4,3,2,1].map((n) => ({ n: n, c: live.filter((r) => r.stars === n).length }));
+  const shown = (filter === "all" ? list : filter === "low" ? list.filter((r) => r.stars <= 3) : list.filter((r) => r.hidden))
+    .slice().sort((a, b) => (b.at || 0) - (a.at || 0));
+
+  return (
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12, marginBottom: 16 }}>
+        <Stat l="Average rating" v={live.length ? avg.toFixed(1) + " ★" : "—"} sub={live.length + " shown on the site"} />
+        <Stat l="Reviews" v={list.length} sub={list.filter((r) => r.hidden).length + " hidden"} />
+        <Stat l="5 star" v={spread[0].c} sub={live.length ? Math.round(spread[0].c / live.length * 100) + "% of all" : "—"} />
+        <Stat l="3 star or less" v={live.filter((r) => r.stars <= 3).length} sub="worth a phone call" hot={live.filter((r) => r.stars <= 3).length > 0} />
+      </div>
+
+      <div style={{ background: "#fff", border: "1px solid #EDE7DA", borderRadius: 12, padding: "12px 15px", marginBottom: 14 }}>
+        {spread.map((s) => (
+          <div key={s.n} style={{ display: "flex", alignItems: "center", gap: 10, padding: "3px 0" }}>
+            <span style={{ fontSize: 12.5, width: 42, fontWeight: 700 }}>{s.n} ★</span>
+            <div style={{ flex: 1, background: "#F1ECE1", borderRadius: 999, height: 9, overflow: "hidden" }}>
+              <div style={{ width: (live.length ? (s.c / live.length) * 100 : 0) + "%", height: "100%", background: s.n >= 4 ? BRAND.ok : s.n === 3 ? "#E8A317" : BRAND.danger, borderRadius: 999 }} />
+            </div>
+            <span style={{ fontSize: 12.5, width: 28, textAlign: "right", color: "#6b675e" }}>{s.c}</span>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+        {[["all", "All reviews"], ["low", "Needs attention (3★ or less)"], ["hidden", "Hidden"]].map(([v, l]) => (
+          <button key={v} onClick={() => setFilter(v)}
+            style={{ background: filter === v ? BRAND.red : "#fff", color: filter === v ? "#fff" : BRAND.ink, border: "1px solid #e5dfd0", borderRadius: 999, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>{l}</button>
+        ))}
+        <button onClick={load} style={{ marginLeft: "auto", background: "#fff", border: "1.5px solid " + BRAND.red, color: BRAND.red, borderRadius: 8, padding: "6px 14px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
+          {busy ? "…" : "↻ Refresh"}
+        </button>
+      </div>
+
+      {shown.length === 0 && (
+        <div style={{ textAlign: "center", color: "#8a857a", padding: 30, fontSize: 13.5, lineHeight: 1.6 }}>
+          No reviews here yet.<br />Customers can rate an order once you mark it <b>Delivered</b>.
+        </div>
+      )}
+
+      <div style={{ display: "grid", gap: 10 }}>
+        {shown.map((r) => (
+          <div key={r.id} style={{ background: "#fff", border: "1px solid " + (r.hidden ? "#E0D7C4" : r.stars <= 3 ? "#F0C0BA" : "#EDE7DA"), borderRadius: 12, padding: 14, opacity: r.hidden ? .6 : 1 }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <AdminStars n={r.stars} size={17} />
+              <b style={{ fontSize: 13.5 }}>{r.name || "Customer"}</b>
+              <span style={{ fontSize: 12, color: "#8a857a" }}>📞 {r.phone}</span>
+              <span style={{ fontSize: 12, color: "#8a857a" }}>· {r.orderId}</span>
+              <span style={{ fontSize: 12, color: "#a39e93" }}>
+                {r.at ? new Date(r.at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", hour12: true }) : ""}
+              </span>
+              {r.hidden && <span style={{ fontSize: 11, fontWeight: 800, background: "#F4F0E6", color: "#6b675e", borderRadius: 999, padding: "2px 9px" }}>HIDDEN</span>}
+            </div>
+            {r.text && <div style={{ fontSize: 13.5, color: "#3A2F22", lineHeight: 1.6, margin: "8px 0 6px" }}>&ldquo;{r.text}&rdquo;</div>}
+            {r.items && r.items.length > 0 && (
+              <div style={{ fontSize: 12, color: "#8a857a" }}>Ordered: {r.items.join(", ")}</div>
+            )}
+            <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+              <a href={"https://wa.me/91" + (r.phone || "") + "?text=" + encodeURIComponent("Hi " + (r.name || "") + ", thank you for rating your Hunt & Eat order " + r.orderId + ". ")}
+                target="_blank" rel="noreferrer"
+                style={{ background: "#1FA855", color: "#fff", borderRadius: 8, padding: "7px 14px", fontWeight: 800, fontSize: 12.5, textDecoration: "none" }}>
+                💬 Reply on WhatsApp
+              </a>
+              <button onClick={() => toggleHide(r.id)}
+                style={{ background: "#f0ece1", border: "none", borderRadius: 8, padding: "7px 14px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
+                {r.hidden ? "Show on site" : "Hide from site"}
+              </button>
+              <button onClick={() => remove(r.id)}
+                style={{ background: "#fbe9e7", color: BRAND.danger, border: "none", borderRadius: 8, padding: "7px 14px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
+                Delete
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 
