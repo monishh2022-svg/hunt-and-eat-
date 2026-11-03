@@ -366,7 +366,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v6.1</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v6.2</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -2869,6 +2869,20 @@ function Slots({ slots, save }) {
   return (
     <>
       <p style={{ fontSize: 13, color: "#6b675e" }}>Same-day slots auto-close before the slot starts (cut-off set in Settings). Toggle a slot off to hide it from customers. Capacity saves when you click away, or use the Save button.</p>
+      {(() => {
+        const bad = (slots || []).filter((s) => {
+          const n = Number(s.start);
+          return !(isFinite(n) && n >= 0 && n <= 23);
+        });
+        if (!bad.length) return null;
+        return (
+          <div style={{ background: "#FBE9E7", border: "1px solid #F0C0BA", borderRadius: 10, padding: "11px 13px", fontSize: 13, lineHeight: 1.55, margin: "0 0 12px", color: "#8E1B25" }}>
+            <b>These slots have no proper start hour:</b> {bad.map((s) => s.label || s.id).join(", ")}.<br />
+            The cut-off is worked out from the start hour, so delete and re-add them with the right hour
+            (6 AM = 6, 4 PM = 16) or they may stay open past their cut-off.
+          </div>
+        );
+      })()}
       <div style={{ display: "grid", gap: 8 }}>
         {draft.map((s) => (
           <div key={s.id} style={{ background: "#fff", borderRadius: 10, padding: "12px 14px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
@@ -2897,8 +2911,14 @@ function Slots({ slots, save }) {
       )}
       <button onClick={() => {
         const label = prompt("Slot label (e.g. 8:00 PM – 10:00 PM)");
-        const start = Number(prompt("Start hour, 24h format (e.g. 20)"));
-        if (label && !isNaN(start)) save([...slots, { id: "s" + Date.now(), label, start, capacity: 10, active: true }]);
+        if (!label || !label.trim()) return;
+        const raw = prompt("Start hour, 24h format (0–23). 8 PM = 20");
+        if (raw === null || raw.trim() === "") return;          // cancelled or left blank
+        const start = Number(raw);
+        if (!isFinite(start) || start < 0 || start > 23 || start !== Math.floor(start)) {
+          return alert("Start hour must be a whole number from 0 to 23.\n\nThis is what the cut-off uses, so it has to be right — 6 AM is 6, 4 PM is 16, 8 PM is 20.");
+        }
+        save([...slots, { id: "s" + Date.now(), label: label.trim(), start: start, capacity: 10, active: true }]);
       }} style={{ marginTop: 12, background: BRAND.red, color: "#fff", border: "none", borderRadius: 10, padding: "10px 18px", fontWeight: 700, cursor: "pointer" }}>+ Add slot</button>
     </>
   );
