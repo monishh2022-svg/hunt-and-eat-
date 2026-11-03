@@ -1302,7 +1302,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v6.0</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v6.2</span>
         </div>
       </footer>
 
@@ -1783,10 +1783,36 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
   const outside = activeZones.length > 0 && form.loc ? !checkZones(form.loc, zones).inside : false;
   const shipOnly = outside && allShippable;
 
+  // A slot's start hour decides the cut-off. Older or hand-added slots can
+  // carry a missing or text value, so read the label when the number is no good.
+  const slotStart = (s) => {
+    const n = Number(s && s.start);
+    if (isFinite(n) && n >= 0 && n <= 23) return n;
+    const m = String((s && s.label) || "").match(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)/i);
+    if (!m) return null;
+    let h = Number(m[1]) % 12;
+    if (/PM/i.test(m[3])) h += 12;
+    return h + Number(m[2] || 0) / 60;
+  };
+
+  // re-reads the clock so a page left open doesn't keep showing a closed slot
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const t2 = setInterval(() => setTick((n) => n + 1), 30000);
+    return () => clearInterval(t2);
+  }, []);
+
   const now = new Date();
   const slotState = (s) => {
     if (!s.active) return { ok: false, why: "Unavailable" };
-    if (day === dkey(now) && now.getHours() + now.getMinutes() / 60 >= s.start - (settings.cutoffHours || 0)) return { ok: false, why: "Cut-off passed" };
+    // read the clock here, not at render — a page can sit open for hours
+    // before someone presses Place order
+    const at = new Date();
+    const st = slotStart(s);
+    if (st != null && day === dkey(at) &&
+        at.getHours() + at.getMinutes() / 60 >= st - (settings.cutoffHours || 0)) {
+      return { ok: false, why: "Cut-off passed" };
+    }
     const booked = orders.filter((o) => o.slotDate === day && o.slotId === s.id && o.status !== "Cancelled").length;
     if (booked >= s.capacity) return { ok: false, why: "Slot full" };
     return { ok: true, left: s.capacity - booked };
@@ -1821,6 +1847,23 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
     }
     if (!shipOnly && !slotId) return setErr("Please pick a delivery slot.");
     const slot = shipOnly ? null : slots.find((s) => s.id === slotId);
+    // The page may have been open a while, or the slot may have filled up since
+    // it was picked — so check again at the moment the order is placed.
+    if (!shipOnly) {
+      if (!slot) return setErr("That delivery slot is no longer offered. Please pick another one.");
+      const st = slotState(slot);
+      if (!st.ok) {
+        if (st.why === "Cut-off passed") {
+          return setErr("Sorry — the " + slot.label + " slot has closed. We need " +
+            (settings.cutoffHours || 0) + " hour" + ((settings.cutoffHours || 0) === 1 ? "" : "s") +
+            " notice before a slot starts. Please choose a later slot or another day.");
+        }
+        if (st.why === "Slot full") {
+          return setErr("Sorry — the " + slot.label + " slot just filled up. Please choose another slot.");
+        }
+        return setErr("That slot isn't available any more. Please choose another one.");
+      }
+    }
     const id = "HE" + Date.now().toString().slice(-6);
     done({
       id, items: cartItems.map(({ p, qty }) => ({ name: p.name, qty, price: p.price })),
