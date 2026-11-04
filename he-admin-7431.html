@@ -366,7 +366,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v6.2</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v6.3</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -1513,7 +1513,7 @@ function Sessions() {
   };
 
   const exportSessions = () => {
-    const out = [["Date", "Time", "Session", "Device", "Screen", "Came from", "Minutes on site",
+    const out = [["Date", "Time", "Session", "Name", "Phone", "Device", "Screen", "Came from", "Minutes on site",
       "Outcome", "Rage taps", "Dead taps", "Clicks", "Scroll depth %", "What they did"]];
     rows.forEach((s) => {
       const d = s.t ? new Date(s.t) : null;
@@ -1531,7 +1531,7 @@ function Sessions() {
         return at + x[1];
       }).join(" | ");
       out.push([s.day, d ? d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "",
-        s.id, s.m || "", (s.w || "") + "x" + (s.h || ""), s.r || "direct",
+        s.id, s.nm || "", s.p || "", s.m || "", (s.w || "") + "x" + (s.h || ""), s.r || "direct",
         ((Number(s.d) || 0) / 60).toFixed(1), outcome(s).txt, rage(s), dead(s),
         (s.c || []).length, deepest, story]);
     });
@@ -1566,7 +1566,7 @@ function Sessions() {
         </div>
       )}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
-        {[["list", "📃 Sessions"], ["heat", "🔥 Click heatmap"]].map(([v, l]) => (
+        {[["list", "📃 Sessions"], ["contact", "📞 With a number"], ["heat", "🔥 Click heatmap"]].map(([v, l]) => (
           <button key={v} onClick={() => setView(v)} style={{ background: view === v ? BRAND.red : "#fff", color: view === v ? "#fff" : BRAND.ink, border: "1px solid #e5dfd0", borderRadius: 999, padding: "7px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>{l}</button>
         ))}
         <select value={preset} onChange={(e) => setPreset(e.target.value)} style={{ ...inp, width: "auto", padding: "6px 10px", fontSize: 12.5, fontWeight: 700 }}>
@@ -1605,7 +1605,40 @@ function Sessions() {
         </button>
       </div>
 
-      {view === "heat" ? (
+      {view === "contact" ? (() => {
+        const leads = rows.filter((s) => s.p && outcome(s).txt !== "Ordered");
+        return (
+          <>
+            <p style={{ fontSize: 12.5, color: "#6b675e", margin: "0 0 10px", lineHeight: 1.6 }}>
+              Visitors who left a number on the checkout page but didn&rsquo;t finish, plus returning customers who
+              browsed without ordering. These are the ones worth a WhatsApp.
+            </p>
+            {leads.length === 0 && <div style={{ textAlign: "center", color: "#8a857a", padding: 26, fontSize: 13.5 }}>Nobody in this range left a number without ordering.</div>}
+            <div style={{ display: "grid", gap: 9 }}>
+              {leads.map((s) => {
+                const o2 = outcome(s);
+                return (
+                  <div key={s.id} style={{ background: "#fff", border: "1px solid #EDE7DA", borderRadius: 12, padding: "12px 14px", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                    <b style={{ fontSize: 14 }}>{s.nm || "Unknown name"}</b>
+                    <span style={{ fontSize: 13, color: "#5c584e" }}>📞 {s.p}</span>
+                    <span style={{ fontSize: 11.5, color: "#8a857a" }}>
+                      {new Date(s.t).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", hour12: true })}
+                      {" · "}{s.d ? (s.d > 59 ? Math.round(s.d / 60) + " min" : s.d + " sec") : "0 sec"} on site
+                    </span>
+                    <span style={{ background: o2.bg, color: o2.col, borderRadius: 6, padding: "3px 10px", fontSize: 11.5, fontWeight: 800 }}>{o2.txt}</span>
+                    <a href={"https://wa.me/91" + s.p + "?text=" + encodeURIComponent("Hi " + (s.nm || "") + ", this is Hunt & Eat. You were looking at our menu — can I help you place the order?")}
+                      target="_blank" rel="noreferrer"
+                      style={{ marginLeft: "auto", background: "#1FA855", color: "#fff", borderRadius: 8, padding: "7px 14px", fontWeight: 800, fontSize: 12.5, textDecoration: "none" }}>
+                      💬 WhatsApp
+                    </a>
+                    <a href={"tel:" + s.p} style={{ background: "#241E1A", color: "#fff", borderRadius: 8, padding: "7px 14px", fontWeight: 800, fontSize: 12.5, textDecoration: "none" }}>📞 Call</a>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        );
+      })() : view === "heat" ? (
         <>
           <p style={{ fontSize: 12.5, color: "#6b675e", margin: "0 0 10px" }}>
             Where people tapped, as a share of the page. Left to right is across the screen, top to bottom is down the page.
@@ -1643,6 +1676,13 @@ function Sessions() {
                     <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                       {r > 0 && <span style={{ background: "#FBE9E7", color: BRAND.danger, borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 800 }}>😠 {r} rage tap{r > 1 ? "s" : ""}</span>}
                       {d > 0 && <span style={{ background: "#FFF6E5", color: "#8E6A1F", borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 800 }}>❓ {d} dead tap{d > 1 ? "s" : ""}</span>}
+                      {s.p && (
+                        <a href={"https://wa.me/91" + s.p + "?text=" + encodeURIComponent("Hi " + (s.nm || "") + ", this is Hunt & Eat. You were looking at our menu — can I help you place the order?")}
+                          target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}
+                          style={{ background: "#1FA855", color: "#fff", borderRadius: 6, padding: "3px 10px", fontSize: 11.5, fontWeight: 800, textDecoration: "none" }}>
+                          💬 {s.nm ? s.nm + " · " : ""}{s.p}
+                        </a>
+                      )}
                       <span style={{ background: o.bg, color: o.col, borderRadius: 6, padding: "3px 10px", fontSize: 11.5, fontWeight: 800 }}>{o.txt}</span>
                     </div>
                   </div>
