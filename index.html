@@ -371,8 +371,21 @@ function joinWaitlist(d) {
    It never records what anyone types. Field names only, never values.
    Events are batched and capped so the free database tier is never strained.
 ========================================================================== */
+/* Who the session belongs to, when we can tell:
+   - a returning customer we already have a number for, or
+   - someone who filled the checkout contact fields but didn't finish.
+   Nothing else typed is ever recorded. */
+function sesWho(phone, name) {
+  try {
+    const d = String(phone || "").replace(/\D/g, "").slice(-10);
+    if (/^[6-9]\d{9}$/.test(d)) { SES.phone = d; SES.dirty = true; }
+    const n = String(name || "").trim().slice(0, 40);
+    if (n) { SES.name = n; SES.dirty = true; }
+  } catch (e) {}
+}
+
 const SES = {
-  id: null, start: 0, events: [], sent: 0, dirty: false, last: 0,
+  id: null, start: 0, events: [], sent: 0, dirty: false, last: 0, phone: "", name: "",
   CAP: 220,              // hard cap on events per session
   clicks: [], lastClick: null,
 };
@@ -419,6 +432,8 @@ async function sesFlush(final) {
       m: window.innerWidth < 640 ? "mobile" : "desktop",
       r: (document.referrer || "direct").slice(0, 80),
       v: (function () { try { return localStorage.getItem("v-id") || ""; } catch (e) { return ""; } })(),
+      p: SES.phone || (function () { try { return localStorage.getItem("he-cust") || ""; } catch (e) { return ""; } })(),
+      nm: SES.name || "",
       e: SES.events,
       c: SES.clicks.slice(0, 120),                          // click map points
       f: final ? 1 : 0,
@@ -439,6 +454,12 @@ function startSession() {
     if (!trackBase()) return;                 // nothing to send to
     SES.id = sesKey();
     SES.start = Date.now();
+    try {
+      const known = localStorage.getItem("he-cust") || "";
+      if (known) SES.phone = known;
+      const prof = JSON.parse(localStorage.getItem("he-profile") || "null");
+      if (prof && prof.name) SES.name = String(prof.name).slice(0, 40);
+    } catch (e) {}
     sesPush("open", (location.pathname + location.search).slice(0, 60));
 
     // ---- clicks, rage clicks, dead clicks ----
@@ -1302,7 +1323,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v6.2</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v6.3</span>
         </div>
       </footer>
 
@@ -1962,7 +1983,9 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
       <div style={{ display: "grid", gap: 12, marginBottom: 18 }}>
         <label style={fieldLbl}>
           <span>Full name<Req /></span>
-          <input placeholder="Your name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={inp} />
+          <input placeholder="Your name" value={form.name}
+            onChange={(e) => { setForm({ ...form, name: e.target.value }); try { sesWho("", e.target.value); } catch (err) {} }}
+            style={inp} />
         </label>
 
         <label style={fieldLbl}>
@@ -1970,7 +1993,7 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
           <div style={{ display: "flex", alignItems: "stretch", border: "1.5px solid #e5dfd0", borderRadius: 10, overflow: "hidden", background: "#fff" }}>
             <span style={{ background: "#F6EADB", padding: "0 13px", fontWeight: 800, fontSize: 14, color: BRAND.green, display: "flex", alignItems: "center", borderRight: "1.5px solid #e5dfd0" }}>+91</span>
             <input inputMode="numeric" type="tel" maxLength={10} placeholder="10-digit mobile number" value={form.phone}
-              onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })}
+              onChange={(e) => { const v = e.target.value.replace(/\D/g, "").slice(0, 10); setForm({ ...form, phone: v }); try { sesWho(v, ""); } catch (err) {} }}
               style={{ ...inp, border: "none", borderRadius: 0, flex: 1, letterSpacing: 1 }} />
           </div>
           <span style={{ fontSize: 11.5, color: "#8a857a", fontWeight: 500 }}>Order updates and rider calls come to this number</span>
