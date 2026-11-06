@@ -366,7 +366,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v6.5</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v6.6</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -1408,9 +1408,75 @@ const EV = {
   dead:   { icon: "❓", label: (a) => "Tapped something that doesn't do anything — " + (a || ""), warn: true },
   scroll: { icon: "📜", label: (a) => "Scrolled " + a + "% down" },
   field:  { icon: "✏️", label: (a) => "Started typing in " + (a || "a field") },
-  leave:  { icon: "↪️", label: (a, b) => (b ? "Filled in " : "Left empty: ") + (a || "a field"), warn: (a, b) => !b },
+  leave:  { icon: "↪️", warn: (a, b) => !b,
+            label: (a, b) => (typeof b === "string" && b)
+              ? <span>Filled in {a || "a field"} <b style={{ background: "#E7F3EC", color: "#17422B", borderRadius: 5, padding: "1px 7px", fontWeight: 800 }}>{b}</b></span>
+              : ((b ? "Filled in " : "Left empty: ") + (a || "a field")) },
   step:   { icon: "✅", label: (a) => "Reached: " + ({ visit: "opened the site", add_to_cart: "added to basket", view_cart: "opened the basket", checkout: "started checkout", slot_picked: "chose a slot", location_set: "pinned location", order_placed: "PLACED THE ORDER" }[a] || a), good: true },
 };
+
+/* Everything the visitor typed into the form, gathered in one place so you
+   can read it — or copy it straight into a phone order. */
+const NICE = [
+  [/your name|^name$/i, "Name"],
+  [/mobile|phone|whatsapp/i, "Mobile"],
+  [/pincode|pin code/i, "Pincode"],
+  [/flat|door|apartment|street|address|landmark/i, "Address"],
+  [/search/i, "Searched for"],
+  [/note|instruction|message/i, "Note to us"],
+  [/coupon|promo/i, "Coupon"],
+];
+function niceField(k) {
+  for (let i = 0; i < NICE.length; i++) if (NICE[i][0].test(k)) return NICE[i][1];
+  return k;
+}
+
+function Typed({ vals, ev }) {
+  const [copied, setCopied] = useState("");
+  // fall back to the timeline for sessions recorded before this was added
+  const pairs = [];
+  const seen = {};
+  const add = (k, v) => {
+    const key = niceField(String(k || "").trim()), val = String(v == null ? "" : v).trim();
+    if (!key || !val || seen[key]) return;
+    seen[key] = 1; pairs.push([key, val]);
+  };
+  Object.keys(vals || {}).forEach((k) => add(k, vals[k]));
+  (ev || []).forEach((x) => { if (x[1] === "leave" && typeof x[3] === "string") add(x[2], x[3]); });
+  if (!pairs.length) return null;
+
+  const block = pairs.map((p) => p[0] + ": " + p[1]).join("\n");
+  const copy = (text, what) => {
+    try {
+      navigator.clipboard.writeText(text);
+      setCopied(what); setTimeout(() => setCopied(""), 1600);
+    } catch (e) {}
+  };
+
+  return (
+    <div style={{ background: "#fff", border: "1.5px solid #CBE5D4", borderRadius: 11, padding: "11px 13px", marginBottom: 11 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+        <b style={{ fontSize: 13, color: "#17422B" }}>⌨️ What they typed</b>
+        <button onClick={(e) => { e.stopPropagation(); copy(block, "all"); }}
+          style={{ background: "#17422B", color: "#fff", border: "none", borderRadius: 7, padding: "5px 12px", fontSize: 11.5, fontWeight: 800, cursor: "pointer" }}>
+          {copied === "all" ? "✓ Copied" : "Copy all"}
+        </button>
+      </div>
+      <div style={{ display: "grid", gap: 5 }}>
+        {pairs.map(([k, v]) => (
+          <div key={k} style={{ display: "flex", gap: 9, alignItems: "baseline", fontSize: 12.5 }}>
+            <span style={{ color: "#8a857a", minWidth: 150, flex: "0 0 auto" }}>{k}</span>
+            <span style={{ fontWeight: 700, color: "#2c2a26", wordBreak: "break-word", flex: 1 }}>{v}</span>
+            <button onClick={(e) => { e.stopPropagation(); copy(v, k); }}
+              style={{ background: "none", border: "none", color: BRAND.red, fontSize: 11, fontWeight: 800, cursor: "pointer", padding: "0 2px", flex: "0 0 auto" }}>
+              {copied === k ? "✓" : "copy"}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function Sessions() {
   const base = (typeof FIREBASE_RTDB_URL !== "undefined" && FIREBASE_RTDB_URL) ? FIREBASE_RTDB_URL.replace(/\/+$/, "") : null;
@@ -1512,9 +1578,16 @@ function Sessions() {
     downloadCSV("hunt-and-eat-daily-" + span.from + "-to-" + span.to + ".csv", out);
   };
 
+  const typedText = (s) => {
+    const seen = {}, out = [];
+    Object.keys(s.fv || {}).forEach((k) => { if (!seen[k] && s.fv[k]) { seen[k] = 1; out.push(k + ": " + s.fv[k]); } });
+    (s.e || []).forEach((x) => { if (x[1] === "leave" && typeof x[3] === "string" && x[3] && !seen[x[2]]) { seen[x[2]] = 1; out.push(x[2] + ": " + x[3]); } });
+    return out.join(" | ");
+  };
+
   const exportSessions = () => {
     const out = [["Date", "Time", "Session", "Name", "Phone", "Device", "Screen", "Came from", "Minutes on site",
-      "Outcome", "Rage taps", "Dead taps", "Clicks", "Scroll depth %", "What they did"]];
+      "Outcome", "Rage taps", "Dead taps", "Clicks", "Scroll depth %", "What they typed", "What they did"]];
     rows.forEach((s) => {
       const d = s.t ? new Date(s.t) : null;
       const deepest = Math.max(0, ...(s.e || []).filter((x) => x[1] === "scroll").map((x) => Number(x[2]) || 0));
@@ -1526,14 +1599,14 @@ function Sessions() {
         if (x[1] === "rage") return at + "RAGE TAP " + x[2];
         if (x[1] === "dead") return at + "dead tap " + x[2];
         if (x[1] === "field") return at + "started typing in " + x[2];
-        if (x[1] === "leave") return at + "left field " + x[2] + (x[3] ? " (filled)" : " (empty)");
+        if (x[1] === "leave") return at + "left field " + x[2] + (typeof x[3] === "string" && x[3] ? " = " + x[3] : (x[3] ? " (filled)" : " (empty)"));
         if (x[1] === "open") return at + "opened " + x[2];
         return at + x[1];
       }).join(" | ");
       out.push([s.day, d ? d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "",
         s.id, s.nm || "", s.p || "", s.m || "", (s.w || "") + "x" + (s.h || ""), s.r || "direct",
         ((Number(s.d) || 0) / 60).toFixed(1), outcome(s).txt, rage(s), dead(s),
-        (s.c || []).length, deepest, story]);
+        (s.c || []).length, deepest, typedText(s), story]);
     });
     downloadCSV("hunt-and-eat-sessions-" + span.from + "-to-" + span.to + ".csv", out);
   };
@@ -1693,6 +1766,7 @@ function Sessions() {
                     <div style={{ fontSize: 11.5, color: "#8a857a", marginBottom: 8 }}>
                       Came from {s.r && s.r !== "direct" ? s.r.replace(/^https?:\/\//, "").split("/")[0] : "a direct link or WhatsApp"} · screen {s.w}×{s.h}
                     </div>
+                    <Typed vals={s.fv} ev={s.e} />
                     <div style={{ display: "grid", gap: 4 }}>
                       {(s.e || []).map((x, i) => {
                         const def = EV[x[1]] || { icon: "•", label: () => x[1] };
@@ -1720,7 +1794,9 @@ function Sessions() {
         </div>
       )}
       <p style={{ fontSize: 11.5, color: "#8a857a", marginTop: 14 }}>
-        What people type is never recorded — only which field they used and whether they left it empty.
+        What people type into the delivery form and the search box is recorded, so you can finish an
+        abandoned order over the phone. Card and password fields are never read. Tell customers this in
+        your privacy note, and use these details only to help with their own order.
       </p>
     </>
   );
