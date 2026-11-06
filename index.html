@@ -974,7 +974,10 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
   const isFreeCat = (id) => freeCats.indexOf(id) >= 0;
   // Pre-book categories are ordered ahead for a future date, on their own order.
   const preCats = (categories || []).filter((c) => c.preBook).map((c) => c.id);
-  const isPreCat = (id) => preCats.indexOf(id) >= 0;
+  // Pre-book is now a property of the ITEM, so mutton trotters can sit in the
+  // Mutton category and still be ordered ahead. A whole category can still be
+  // marked pre-book, which applies to everything in it.
+  const isPreItem = (p) => !!(p && (p.preBook === true || preCats.indexOf(p.cat) >= 0));
   const liveZones = (zones || []).filter(zoneValid);
 
   // Remember the area the customer checked, so the catalogue matches where they are.
@@ -1059,8 +1062,8 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
   });
 
   // pre-book goes out on its own delivery, so a basket can't hold both kinds
-  const preItems = cartItems.filter((x) => isPreCat(x.p.cat));
-  const normalItems = cartItems.filter((x) => !isPreCat(x.p.cat));
+  const preItems = cartItems.filter((x) => isPreItem(x.p));
+  const normalItems = cartItems.filter((x) => !isPreItem(x.p));
   const mixedBasket = preItems.length > 0 && normalItems.length > 0;
   const keepOnly = (keep) => setCart((c) => {
     const n = { ...c };
@@ -1300,7 +1303,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         )}
         <div className="pgrid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(230px,1fr))", gap: 16 }}>
           {visible.map((p) => (
-            <ProductCard key={p.id} p={p} qty={cart[p.id] || 0} add={add} pre={isPreCat(p.cat)} onOpen={() => setDetail(p)} />
+            <ProductCard key={p.id} p={p} qty={cart[p.id] || 0} add={add} pre={isPreItem(p)} onOpen={() => setDetail(p)} />
           ))}
           {visible.length === 0 && <div style={{ gridColumn: "1/-1", textAlign: "center", color: "#8a857a", padding: 40 }}>No products found. Try a different search.</div>}
         </div>
@@ -1315,7 +1318,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
               <div>
                 <div className="display" style={{ color: "#fff", fontWeight: 800, fontSize: 17 }}>Hunt & Eat</div>
                 <div style={{ fontSize: 9, letterSpacing: 2, fontWeight: 700 }}>THE FRESH AND ORIGINAL</div>
-                <div style={{ marginTop: 4 }}>Farm-to-home naattu kozhi • Guduvanchery, Chennai · 📞 {settings.phone}</div>
+                <div style={{ marginTop: 4 }}>Farm-to-home naattu kozhi • Kundrathur – Nandambakkam, Chennai · 📞 {settings.phone}</div>
               </div>
             </div>
             <div>Serving pincodes: {settings.pincodes}</div>
@@ -1323,20 +1326,22 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v6.3</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v6.4</span>
         </div>
       </footer>
 
       {/* floating cart bar */}
       {count > 0 && !cartOpen && !checkout && !placed && (
         <div className="cartbar" onClick={() => { if (onRefresh) onRefresh(); setCartOpen(true); }} style={{ position: "fixed", bottom: 16, left: "50%", transform: "translateX(-50%)", background: BRAND.green, color: "#fff", borderRadius: 999, padding: "12px 22px", boxShadow: "0 8px 24px rgba(0,0,0,.25)", cursor: "pointer", zIndex: 40, display: "flex", gap: 14, alignItems: "center", fontWeight: 700 }}>
-          <span>{count} item{count > 1 ? "s" : ""} · {rup(subtotal)}</span>
-          <span style={{ background: BRAND.gold, color: BRAND.greenDark, borderRadius: 999, padding: "4px 14px", fontSize: 13 }}>View cart →</span>
+          <span>Checkout</span>
+          <span style={{ background: BRAND.gold, color: BRAND.greenDark, borderRadius: 999, padding: "4px 14px", fontSize: 13 }}>
+            {count} item{count > 1 ? "s" : ""} added →
+          </span>
         </div>
       )}
 
       {areaOpen && <MapPicker initial={areaLoc} zones={zones} close={() => setAreaOpen(false)} onSave={setArea} />}
-      {detail && <DetailModal p={detail} qty={cart[detail.id] || 0} add={add} pre={isPreCat(detail.cat)} close={() => setDetail(null)} />}
+      {detail && <DetailModal p={detail} qty={cart[detail.id] || 0} add={add} pre={isPreItem(detail)} close={() => setDetail(null)} />}
       {cartOpen && (
         <Drawer title="Your basket" close={() => setCartOpen(false)}>
           {cartItems.length === 0 ? (
@@ -1413,7 +1418,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
       )}
       {checkout && (
         <Checkout cartItems={cartItems} subtotal={subtotal} delFee={delFee} total={total}
-          slots={slots} settings={settings} orders={orders} zones={zones} freeCats={freeCats} preCats={preCats} onAreaKnown={setArea}
+          slots={slots} settings={settings} orders={orders} zones={zones} freeCats={freeCats} isPre={isPreItem} onAreaKnown={setArea}
           back={() => { setCheckout(false); setCartOpen(true); }}
           done={(order) => { onPlaceOrder(order); setCart({}); setCheckout(false); setPlaced(order); }} />
       )}
@@ -1510,7 +1515,7 @@ const Row = ({ l, r, green }) => (
 
 const fieldLbl = { display: "grid", gap: 5, fontSize: 13, fontWeight: 700 };
 const Req = () => <span style={{ color: "#D33" }}> *</span>;
-const DEFAULT_PIN = { lat: 12.8438, lng: 80.0576 }; // Guduvanchery
+const DEFAULT_PIN = { lat: 12.9977, lng: 80.0972 }; // Kundrathur
 
 function ensureLeaflet() {
   return new Promise((resolve, reject) => {
@@ -1745,10 +1750,9 @@ function MapPicker({ initial, zones, onSave, close }) {
 }
 
 /* ---------------- checkout ---------------- */
-function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders, zones, freeCats, preCats, onAreaKnown, back, done }) {
+function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders, zones, freeCats, isPre, onAreaKnown, back, done }) {
   // a pre-book basket is delivered on a chosen future day, never today
-  const preIds = preCats || [];
-  const isPreOrder = cartItems.length > 0 && cartItems.every((x) => preIds.indexOf(x.p.cat) >= 0);
+  const isPreOrder = cartItems.length > 0 && typeof isPre === "function" && cartItems.every((x) => isPre(x.p));
   // if anything ran out between the basket and this screen, stop here
   const soldOut = cartItems.filter((x) => x.p && x.p.stock === false);
   const activeZones = (zones || []).filter(zoneValid);
@@ -1907,60 +1911,7 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
 
   return (
     <Drawer title="Checkout" close={back} backLabel="← Basket">
-      {shipOnly ? (
-        <>
-          <SectionLabel n="1" t="All-India delivery" />
-          <div style={{ background: "#FFF9EC", border: "1.5px solid #E8D5A8", borderRadius: 12, padding: 14, marginBottom: 18, fontSize: 13, lineHeight: 1.65, color: "#5c584e" }}>
-            <b style={{ color: BRAND.ink }}>📦 We courier this order to you</b><br />
-            Your location is outside our fresh-delivery area, but everything in your basket travels well.
-            We pack and dispatch within 24 hours — delivery usually takes {settings.shipDays || "3 – 5 days"}, and we send tracking by SMS.
-          </div>
-        </>
-      ) : (
-      <>
-      <SectionLabel n="1" t="Delivery slot" />
-      {todayFull && day !== days[0].key && (
-        <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 10, padding: "10px 13px", fontSize: 12.5, lineHeight: 1.55, margin: "0 0 10px", color: "#5c584e" }}>
-          <b style={{ color: "#8E6A1F" }}>Today&rsquo;s slots have closed.</b>{" "}
-          We&rsquo;ve moved you to the next day we can deliver. Tap any other day to change it.
-        </div>
-      )}
-      {isPreOrder && preDays > 0 && (
-        <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 10, padding: "10px 13px", fontSize: 12.5, lineHeight: 1.55, margin: "0 0 10px", color: "#5c584e" }}>
-          <b style={{ color: "#8E6A1F" }}>Pre-book needs {preDays} day{preDays > 1 ? "s" : ""}&rsquo; notice.</b>{" "}
-          The earliest we can deliver this order is {days[0] ? days[0].sub : "the next available day"}.
-        </div>
-      )}
-      <div style={{ fontSize: 12, color: "#7a6a4f", margin: "-4px 0 8px", fontWeight: 600 }}>
-        We deliver on: {allowedDays.slice().sort().map((i) => ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][i]).join(", ")}
-      </div>
-      {days.length === 0 && <div style={{ color: BRAND.red, fontSize: 13, marginBottom: 10, fontWeight: 600 }}>No delivery dates are open right now — please WhatsApp us to arrange your order.</div>}
-      <div style={{ display: "flex", gap: 8, marginBottom: 10, overflowX: "auto", paddingBottom: 4 }}>
-        {days.map((d) => (
-          <button key={d.key} onClick={() => { setDay(d.key); setSlotId(null); }}
-            style={{ flex: "0 0 auto", minWidth: 86, border: "2px solid " + (day === d.key ? BRAND.green : "#e5dfd0"), background: day === d.key ? BRAND.green : "#fff", color: day === d.key ? "#fff" : BRAND.ink, borderRadius: 10, padding: "8px 4px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
-            {d.label}<div style={{ fontSize: 11, fontWeight: 500, opacity: 0.8 }}>{d.sub}</div>
-          </button>
-        ))}
-      </div>
-      <div style={{ display: "grid", gap: 8, marginBottom: 18 }}>
-        {slots.map((s) => {
-          const st = slotState(s);
-          const sel = slotId === s.id;
-          return (
-            <button key={s.id} disabled={!st.ok} onClick={() => { trackStep("slot_picked"); setSlotId(s.id); }}
-              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", border: "2px solid " + (sel ? BRAND.green : "#e5dfd0"), background: sel ? "#FCEFEA" : st.ok ? "#fff" : "#f3f0e8", borderRadius: 10, padding: "10px 14px", cursor: st.ok ? "pointer" : "not-allowed", fontSize: 14, fontWeight: 600, color: st.ok ? BRAND.ink : "#a39e93" }}>
-              <span>🕐 {s.label}</span>
-              <span style={{ fontSize: 12, fontWeight: 600 }}>{st.ok ? (st.left <= 5 ? `${st.left} left` : "Available") : st.why}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      </>
-      )}
-
-      <SectionLabel n="2" t="Delivery details" />
+      <SectionLabel n="1" t="Your contact & address" />
       {remembered ? (
         <div style={{ background: "#EAF6EE", border: "1px solid #BEDFC8", borderRadius: 10, padding: "10px 12px", margin: "-2px 0 12px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span style={{ fontSize: 12.5, fontWeight: 700, color: "#177245" }}>
@@ -2064,6 +2015,59 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
           })()}
         </div>
       </div>
+
+      {shipOnly ? (
+        <>
+          <SectionLabel n="2" t="All-India delivery" />
+          <div style={{ background: "#FFF9EC", border: "1.5px solid #E8D5A8", borderRadius: 12, padding: 14, marginBottom: 18, fontSize: 13, lineHeight: 1.65, color: "#5c584e" }}>
+            <b style={{ color: BRAND.ink }}>📦 We courier this order to you</b><br />
+            Your location is outside our fresh-delivery area, but everything in your basket travels well.
+            We pack and dispatch within 24 hours — delivery usually takes {settings.shipDays || "3 – 5 days"}, and we send tracking by SMS.
+          </div>
+        </>
+      ) : (
+      <>
+      <SectionLabel n="2" t="When shall we deliver?" />
+      {todayFull && day !== days[0].key && (
+        <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 10, padding: "10px 13px", fontSize: 12.5, lineHeight: 1.55, margin: "0 0 10px", color: "#5c584e" }}>
+          <b style={{ color: "#8E6A1F" }}>Today&rsquo;s slots have closed.</b>{" "}
+          We&rsquo;ve moved you to the next day we can deliver. Tap any other day to change it.
+        </div>
+      )}
+      {isPreOrder && preDays > 0 && (
+        <div style={{ background: "#FFF6E5", border: "1px solid #EAD9A8", borderRadius: 10, padding: "10px 13px", fontSize: 12.5, lineHeight: 1.55, margin: "0 0 10px", color: "#5c584e" }}>
+          <b style={{ color: "#8E6A1F" }}>Pre-book needs {preDays} day{preDays > 1 ? "s" : ""}&rsquo; notice.</b>{" "}
+          The earliest we can deliver this order is {days[0] ? days[0].sub : "the next available day"}.
+        </div>
+      )}
+      <div style={{ fontSize: 12, color: "#7a6a4f", margin: "-4px 0 8px", fontWeight: 600 }}>
+        We deliver on: {allowedDays.slice().sort().map((i) => ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][i]).join(", ")}
+      </div>
+      {days.length === 0 && <div style={{ color: BRAND.red, fontSize: 13, marginBottom: 10, fontWeight: 600 }}>No delivery dates are open right now — please WhatsApp us to arrange your order.</div>}
+      <div style={{ display: "flex", gap: 8, marginBottom: 10, overflowX: "auto", paddingBottom: 4 }}>
+        {days.map((d) => (
+          <button key={d.key} onClick={() => { setDay(d.key); setSlotId(null); }}
+            style={{ flex: "0 0 auto", minWidth: 86, border: "2px solid " + (day === d.key ? BRAND.green : "#e5dfd0"), background: day === d.key ? BRAND.green : "#fff", color: day === d.key ? "#fff" : BRAND.ink, borderRadius: 10, padding: "8px 4px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+            {d.label}<div style={{ fontSize: 11, fontWeight: 500, opacity: 0.8 }}>{d.sub}</div>
+          </button>
+        ))}
+      </div>
+      <div style={{ display: "grid", gap: 8, marginBottom: 18 }}>
+        {slots.map((s) => {
+          const st = slotState(s);
+          const sel = slotId === s.id;
+          return (
+            <button key={s.id} disabled={!st.ok} onClick={() => { trackStep("slot_picked"); setSlotId(s.id); }}
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", border: "2px solid " + (sel ? BRAND.green : "#e5dfd0"), background: sel ? "#FCEFEA" : st.ok ? "#fff" : "#f3f0e8", borderRadius: 10, padding: "10px 14px", cursor: st.ok ? "pointer" : "not-allowed", fontSize: 14, fontWeight: 600, color: st.ok ? BRAND.ink : "#a39e93" }}>
+              <span>🕐 {s.label}</span>
+              <span style={{ fontSize: 12, fontWeight: 600 }}>{st.ok ? (st.left <= 5 ? `${st.left} left` : "Available") : st.why}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      </>
+      )}
 
       <SectionLabel n="3" t="Payment" />
       <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
