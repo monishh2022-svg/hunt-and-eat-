@@ -366,7 +366,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v6.4</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v6.5</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -2790,7 +2790,7 @@ function CatManager({ cats, products, onSave, close }) {
 /* ---------------- Menu (with photo upload) ---------------- */
 function Menu({ products, save, cats, saveCats }) {
   const [catOpen, setCatOpen] = useState(false);
-  const empty = { id: "", cat: (cats[0] && cats[0].id) || "chicken", name: "", pcs: "", gross: "—", net: "—", mrp: "", price: "", stock: true, preBook: false, emoji: "🍗", desc: "", img: "" };
+  const empty = { id: "", cat: (cats[0] && cats[0].id) || "chicken", name: "", pcs: "", gross: "—", net: "—", mrp: "", price: "", stock: true, preBook: false, sub: "", emoji: "🍗", desc: "", img: "" };
   const [edit, setEdit] = useState(null);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef(null);
@@ -2875,6 +2875,16 @@ function Menu({ products, save, cats, saveCats }) {
             <select style={inp} value={edit.cat} onChange={(e) => setEdit({ ...edit, cat: e.target.value })}>
               {cats.map((c) => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
             </select>
+            <input style={inp} list="he-subs" placeholder="Sub-category (optional) — e.g. Curry cut, Biryani cut, Pre-order parts"
+              value={edit.sub || ""} onChange={(e) => setEdit({ ...edit, sub: e.target.value })} />
+            <datalist id="he-subs">
+              {Array.from(new Set((products || []).map((x) => (x.sub || "").trim()).filter(Boolean))).map((s) => <option key={s} value={s} />)}
+            </datalist>
+            <div style={{ fontSize: 11.5, color: "#8a857a", marginTop: -4, lineHeight: 1.5 }}>
+              Items sharing a sub-category get grouped inside the category — customers see a second row of
+              buttons (Curry cut · Biryani cut · Pre-order parts) once a category has more than one. Leave blank
+              and the item just sits under “All”.
+            </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
               <input style={inp} placeholder="Selling price ₹" type="number" value={edit.price} onChange={(e) => setEdit({ ...edit, price: e.target.value })} />
               <input style={inp} placeholder="MRP ₹" type="number" value={edit.mrp} onChange={(e) => setEdit({ ...edit, mrp: e.target.value })} />
