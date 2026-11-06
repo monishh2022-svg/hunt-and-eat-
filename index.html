@@ -1010,6 +1010,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
   const [placed, setPlaced] = useState(null);
   const [trackOpen, setTrackOpen] = useState(false);
   const [detail, setDetail] = useState(null);
+  const [subCat, setSubCat] = useState("all");   // second level inside a category
 
   /* ------------------------------------------------------------------
      The phone's back gesture should close whatever is open on top —
@@ -1039,8 +1040,23 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
     };
   }, [overlayOpen]);
 
+  // sub-groups within the chosen category, in the order the items are listed
+  const subList = (() => {
+    if (cat === "all") return [];
+    const out = [];
+    products.forEach((p) => {
+      if (p.cat !== cat) return;
+      if (outsideZone && !isFreeCat(p.cat)) return;
+      const s = (p.sub || "").trim();
+      if (s && out.indexOf(s) < 0) out.push(s);
+    });
+    return out;
+  })();
+  const subActive = subList.indexOf(subCat) >= 0 ? subCat : "all";
+
   const visible = products.filter((p) =>
     (cat === "all" || p.cat === cat) &&
+    (subActive === "all" || (p.sub || "").trim() === subActive) &&
     p.name.toLowerCase().includes(search.toLowerCase()) &&
     (!outsideZone || isFreeCat(p.cat))   // outside our zone: only India-wide items
   );
@@ -1218,7 +1234,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
               <button type="button" key={c.id} disabled={locked}
                 className={"cattile" + (on ? " on" : "") + (locked ? " off" : "")}
                 title={locked ? "Available inside our delivery area only" : c.name}
-                onClick={() => { if (!locked) { setCat(c.id); const m = document.getElementById("menu"); if (m && c.id !== "all") m.scrollIntoView({ behavior: "smooth", block: "start" }); } }}>
+                onClick={() => { if (!locked) { setCat(c.id); setSubCat("all"); const m = document.getElementById("menu"); if (m && c.id !== "all") m.scrollIntoView({ behavior: "smooth", block: "start" }); } }}>
                 <span className="catcirc">
                   {locked ? <span className="catemoji">🔒</span>
                     : c.img ? <img src={c.img} alt="" />
@@ -1275,7 +1291,32 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         <h2 className="display" style={{ fontSize: 27, fontWeight: 800, margin: "0 0 4px" }}>
           {cats.find((c) => c.id === cat)?.name}
         </h2>
-        <p style={{ margin: "0 0 18px", fontSize: 13, color: "#6b675e" }}>Weights shown are gross before cleaning · net after cleaning, like-for-like with your local shop.</p>
+        <p style={{ margin: "0 0 14px", fontSize: 13, color: "#6b675e" }}>Weights shown are gross before cleaning · net after cleaning, like-for-like with your local shop.</p>
+
+        {subList.length > 1 && (
+          <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 18 }}>
+            <button type="button" onClick={() => setSubCat("all")}
+              style={{ background: subActive === "all" ? BRAND.red : "#fff", color: subActive === "all" ? "#fff" : BRAND.ink,
+                border: "1px solid " + (subActive === "all" ? BRAND.red : "#E5DFD0"), borderRadius: 999,
+                padding: "7px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+              All {cats.find((c) => c.id === cat)?.name}
+            </button>
+            {subList.map((s) => {
+              const on = subActive === s;
+              const n = products.filter((p) => p.cat === cat && (p.sub || "").trim() === s).length;
+              const allPre = products.filter((p) => p.cat === cat && (p.sub || "").trim() === s).every((p) => isPreItem(p));
+              return (
+                <button type="button" key={s} onClick={() => setSubCat(s)}
+                  style={{ background: on ? BRAND.red : "#fff", color: on ? "#fff" : BRAND.ink,
+                    border: "1px solid " + (on ? BRAND.red : (allPre ? "#E8C98A" : "#E5DFD0")), borderRadius: 999,
+                    padding: "7px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                  {allPre && !on ? "📅 " : ""}{s}
+                  <span style={{ opacity: .6, fontWeight: 600 }}> ({n})</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
         {visible.length === 0 && (
           <div style={{ textAlign: "center", padding: "36px 18px", background: "#fff", border: "1px solid #EDE7DA", borderRadius: 14 }}>
             <div style={{ fontSize: 40, marginBottom: 8 }}>{search ? "🔍" : "🧺"}</div>
@@ -1326,7 +1367,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v6.4</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v6.5</span>
         </div>
       </footer>
 
