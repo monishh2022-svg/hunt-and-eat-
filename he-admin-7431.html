@@ -366,7 +366,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v6.3</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v6.4</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -514,7 +514,7 @@ function printKOT(o) {
     .q{width:34px}.big{font-size:16px;font-weight:bold}.s{font-size:12px}
   </style></head><body>
     <h2>HUNT &amp; EAT</h2>
-    <div class="c s">The Fresh and Original · Guduvanchery</div>
+    <div class="c s">The Fresh and Original · Kundrathur</div>
     <hr/><div class="big">KOT — ${o.id}</div>
     <div class="s">Placed: ${new Date(o.placedAt).toLocaleString("en-IN")}</div>
     <div class="s">Slot: ${o.slotDate} · ${o.slotLabel}</div>
@@ -1045,7 +1045,7 @@ function ZoneEditor({ zones, onSave, close }) {
             style={{ background: i === sel ? "#FDF0EE" : "#FBF7EF", border: "2px solid " + (i === sel ? BRAND.red : "transparent"), borderRadius: 10, padding: 10, cursor: "pointer" }}>
             <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
               <span style={{ fontSize: 14 }}>{z.shape === "poly" ? "✏️" : "⭕"}</span>
-              <input value={z.name || ""} onChange={(e) => upd(i, { name: e.target.value })} placeholder="Zone name (e.g. Guduvanchery main road block)"
+              <input value={z.name || ""} onChange={(e) => upd(i, { name: e.target.value })} placeholder="Zone name (e.g. Kundrathur main road block)"
                 style={{ ...inp, padding: "7px 10px", fontSize: 13, fontWeight: 700 }} />
               <button onClick={(e) => { e.stopPropagation(); if (window.confirm("Delete this zone?")) { setList(list.filter((_, j) => j !== i)); setSel(0); setDrawing(false); } }}
                 style={{ background: "#fbe9e7", color: BRAND.danger, border: "none", borderRadius: 7, padding: "6px 10px", fontWeight: 800, cursor: "pointer" }}>✕</button>
@@ -2741,6 +2741,8 @@ function CatManager({ cats, products, onSave, close }) {
       <p style={{ fontSize: 12.5, color: "#6b675e", margin: "0 0 12px" }}>
         Tap a circle to give that category a photo — it shows as a round tile on the shop. Without a photo the emoji is used.
         Rename freely — items stay linked. Use ▲▼ to set the order customers see on the store.
+        To make one item pre-book — mutton trotters inside Mutton, say — use the <b>📅 Pre-book</b> tick on that
+        item in the menu list instead; it stays in its own category and customers still see it there.
         Tick <b>Pre-book only</b> on a category that needs notice — those items are ordered for a future day
         and come on their own delivery, never mixed with fresh meat in the same order.
         Tick <b>Delivers all over India</b> on a category of shelf-stable items (pickles, podi, masala, dry fish).
@@ -2788,7 +2790,7 @@ function CatManager({ cats, products, onSave, close }) {
 /* ---------------- Menu (with photo upload) ---------------- */
 function Menu({ products, save, cats, saveCats }) {
   const [catOpen, setCatOpen] = useState(false);
-  const empty = { id: "", cat: (cats[0] && cats[0].id) || "chicken", name: "", pcs: "", gross: "—", net: "—", mrp: "", price: "", stock: true, emoji: "🍗", desc: "", img: "" };
+  const empty = { id: "", cat: (cats[0] && cats[0].id) || "chicken", name: "", pcs: "", gross: "—", net: "—", mrp: "", price: "", stock: true, preBook: false, emoji: "🍗", desc: "", img: "" };
   const [edit, setEdit] = useState(null);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef(null);
