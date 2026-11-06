@@ -368,13 +368,32 @@ function joinWaitlist(d) {
 /* ============================ SESSION TRACKER ============================
    Records what people DO — clicks, scrolls, rage-clicks, which form field
    they gave up on — and replays it as a timeline in Admin -> Sessions.
-   It never records what anyone types. Field names only, never values.
+   It records what was typed into the delivery form (name, phone, door
+   number, street, pincode) so an abandoned order can be followed up, and
+   the words typed into the search box. Nothing else.
    Events are batched and capped so the free database tier is never strained.
 ========================================================================== */
 /* Who the session belongs to, when we can tell:
    - a returning customer we already have a number for, or
    - someone who filled the checkout contact fields but didn't finish.
    Nothing else typed is ever recorded. */
+/* Remembers the latest text in one form field. Password and hidden
+   inputs are never read, values are trimmed to 70 characters, and at most
+   14 fields are kept — enough for the whole delivery form. */
+const SES_SKIP = /password|hidden|otp|cvv|card/i;
+function sesVal(label, value, type) {
+  try {
+    const name = String(label || "").trim();
+    if (!name || SES_SKIP.test(name) || SES_SKIP.test(String(type || ""))) return;
+    const v = String(value == null ? "" : value).trim().replace(/\s+/g, " ").slice(0, 70);
+    if (!v) { if (SES.vals[name]) { delete SES.vals[name]; SES.dirty = true; } return; }
+    if (SES.vals[name] === v) return;
+    if (!SES.vals[name] && Object.keys(SES.vals).length >= 14) return;
+    SES.vals[name] = v;
+    SES.dirty = true;
+  } catch (e) {}
+}
+
 function sesWho(phone, name) {
   try {
     const d = String(phone || "").replace(/\D/g, "").slice(-10);
@@ -386,6 +405,7 @@ function sesWho(phone, name) {
 
 const SES = {
   id: null, start: 0, events: [], sent: 0, dirty: false, last: 0, phone: "", name: "",
+  vals: {},              // latest text in each form field, so you can read it in Admin
   CAP: 220,              // hard cap on events per session
   clicks: [], lastClick: null,
 };
@@ -435,6 +455,7 @@ async function sesFlush(final) {
       p: SES.phone || (function () { try { return localStorage.getItem("he-cust") || ""; } catch (e) { return ""; } })(),
       nm: SES.name || "",
       e: SES.events,
+      fv: SES.vals,                                         // what they typed into the form
       c: SES.clicks.slice(0, 120),                          // click map points
       f: final ? 1 : 0,
     });
@@ -495,17 +516,35 @@ function startSession() {
     }, { passive: true });
 
     // ---- form fields: which one they touched, which one they left ----
+    const fieldName = function (el) {
+      return (el.getAttribute("placeholder") || el.getAttribute("aria-label") || el.type || "field").slice(0, 32);
+    };
     document.addEventListener("focusin", function (ev) {
       const el = ev.target;
       if (!el || !/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
-      const name = (el.getAttribute("placeholder") || el.getAttribute("aria-label") || el.type || "field").slice(0, 32);
-      sesPush("field", name);                 // the NAME of the field only — never the value
+      sesPush("field", fieldName(el));
+    }, true);
+    // keep the latest text as they type, so nothing is lost if they close the
+    // tab without leaving the field
+    document.addEventListener("input", function (ev) {
+      const el = ev.target;
+      if (!el || !/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
+      sesVal(fieldName(el), el.value, el.type);
+    }, true);
+    document.addEventListener("change", function (ev) {
+      const el = ev.target;
+      if (!el || el.tagName !== "SELECT") return;
+      sesVal(fieldName(el), el.value, "select");
     }, true);
     document.addEventListener("focusout", function (ev) {
       const el = ev.target;
       if (!el || !/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
-      const name = (el.getAttribute("placeholder") || el.getAttribute("aria-label") || el.type || "field").slice(0, 32);
-      sesPush("leave", name, el.value ? 1 : 0);   // filled (1) or left empty (0)
+      const name = fieldName(el);
+      sesVal(name, el.value, el.type);
+      // the value itself goes into the timeline, so the replay reads properly
+      const v = SES_SKIP.test(name) || SES_SKIP.test(String(el.type || "")) ? (el.value ? 1 : 0)
+        : String(el.value || "").trim().replace(/\s+/g, " ").slice(0, 70);
+      sesPush("leave", name, v || 0);
     }, true);
 
     // ---- send regularly and on the way out ----
@@ -1367,7 +1406,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v6.5</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v6.6</span>
         </div>
       </footer>
 
