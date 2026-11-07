@@ -366,7 +366,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v7.0</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v7.1</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -458,7 +458,7 @@ function AdminApp() {
         {tab === "reviews" && <Reviews />}
         {tab === "customers" && <Customers orders={orders} />}
         {tab === "visits" && <Visitors orders={orders} />}
-        {tab === "sessions" && <Sessions />}
+        {tab === "sessions" && <Sessions settings={settings} saveSettings={(s) => saveCore({ settings: s })} />}
         {tab === "demand" && <Demand zones={core?.zones || []} />}
         {tab === "riders" && <Riders settings={settings} />}
         {tab === "cash" && <Cash orders={orders} saveOrders={saveOrders} />}
@@ -1488,7 +1488,148 @@ function Typed({ vals, ev }) {
   );
 }
 
-function Sessions() {
+
+/* =====================================================================
+   WIN THEM BACK — one tap to WhatsApp somebody who nearly ordered.
+
+   The wording changes with how far they got, because "your order was
+   almost done" to someone who only browsed reads as a mistake. Edit any
+   message before sending, or save your edit as the new default.
+===================================================================== */
+const WB_KEY = (txt) => (txt === "Left at checkout" ? "checkout"
+  : txt === "Left with items in basket" ? "basket" : "browsed");
+
+const WB_DEFAULTS = {
+  checkout: [
+    { label: "Offer help",
+      text: "Hi {name}, this is Hunt & Eat 🐓\n\nI saw your order was almost done but didn't go through. Was there any trouble with the address or the delivery time?\n\nTell me what you need and I'll place the order for you myself." },
+    { label: "Hold a slot",
+      text: "Hi {name}, Hunt & Eat here 🐓\n\nYour order didn't finish. Which delivery time suits you — morning or evening? I'll keep your cut aside and send it across.\n\nFresh, cut only after you order." },
+    { label: "Free delivery",
+      text: "Hi {name}, Hunt & Eat 🐓\n\nNoticed you stopped at the last step. Confirm today and I'll send it with free home delivery.\n\nJust reply with what you'd like and your time." },
+  ],
+  basket: [
+    { label: "Offer help",
+      text: "Hi {name}, this is Hunt & Eat 🐓\n\nYou had a few things in your basket but didn't finish. Anything I can help with — price, cut size, or delivery time?" },
+    { label: "Still available",
+      text: "Hi {name}, Hunt & Eat here 🐓\n\nWhat you picked is still available for tomorrow's cut. Shall I reserve it for you? Just tell me the time that suits." },
+  ],
+  browsed: [
+    { label: "What were you after?",
+      text: "Hi {name}, this is Hunt & Eat 🐓 — naattu kozhi and mutton, cut fresh after you order, delivered in Kundrathur and Nandambakkam.\n\nWas there something you were looking for that you didn't find on the site? Tell me and I'll arrange it." },
+    { label: "Today's rate",
+      text: "Hi {name}, Hunt & Eat here 🐓\n\nThanks for visiting our site. Shall I send you today's rate list on WhatsApp? Free home delivery in your area." },
+  ],
+};
+
+function WinBack({ s, outcomeTxt, settings, saveSettings, base, ns }) {
+  const [open, setOpen] = useState(false);
+  const [pick, setPick] = useState(0);
+  const [text, setText] = useState("");
+  const [saved, setSaved] = useState("");
+  const [done, setDone] = useState(!!s.fu);
+
+  const key = WB_KEY(outcomeTxt);
+  const mine = ((settings || {}).winback || {})[key];
+  const list = Array.isArray(mine) && mine.length ? mine : WB_DEFAULTS[key];
+  const fill = (tpl) => String(tpl || "")
+    .replace(/\{name\}/g, (s.nm || "").trim() || "there")
+    .replace(/\{phone\}/g, s.p || "");
+
+  const show = (n) => { setPick(n); setText(fill(list[n].text)); };
+  const start = () => { setOpen(true); if (!text) show(0); };
+
+  // remember that this person has been contacted, so nobody rings twice
+  const markDone = async () => {
+    setDone(true);
+    try {
+      await fetch(base + "/" + ns + "/sessions/" + s.day + "/" + s.id + ".json",
+        { method: "PATCH", body: JSON.stringify({ fu: Date.now() }) });
+    } catch (e) {}
+  };
+
+  const send = () => {
+    window.open("https://wa.me/91" + s.p + "?text=" + encodeURIComponent(text), "_blank");
+    markDone();
+  };
+
+  const saveDefault = () => {
+    const next = { ...((settings || {}).winback || {}) };
+    next[key] = list.map((m, i) => (i === pick ? { label: m.label, text: text } : m));
+    saveSettings({ ...(settings || {}), winback: next });
+    setSaved("saved"); setTimeout(() => setSaved(""), 1800);
+  };
+
+  if (!open) {
+    return (
+      <button onClick={start}
+        style={{ background: done ? "#EAF6EE" : "#1FA855", color: done ? "#177245" : "#fff",
+          border: done ? "1.5px solid #BFE0CB" : "none", borderRadius: 8, padding: "7px 14px",
+          fontWeight: 800, fontSize: 12.5, cursor: "pointer" }}>
+        {done ? "✓ Contacted — message again" : "💬 Win them back"}
+      </button>
+    );
+  }
+
+  return (
+    <div style={{ flexBasis: "100%", marginTop: 4, background: "#FCFAF4", border: "1px solid #E5DFD0", borderRadius: 11, padding: "11px 13px" }}>
+      <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 9 }}>
+        {list.map((m, i) => (
+          <button key={i} onClick={() => show(i)}
+            style={{ border: "1.5px solid " + (pick === i ? BRAND.green : "#E0D7C4"),
+              background: pick === i ? BRAND.green : "#fff", color: pick === i ? "#fff" : "#5c584e",
+              borderRadius: 999, padding: "5px 13px", fontWeight: 800, fontSize: 11.5, cursor: "pointer" }}>
+            {m.label}
+          </button>
+        ))}
+        <button onClick={() => setOpen(false)}
+          style={{ marginLeft: "auto", background: "none", border: "none", color: "#8a857a", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+          ✕ Close
+        </button>
+      </div>
+
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={6}
+        style={{ width: "100%", padding: "9px 11px", borderRadius: 9, border: "1.5px solid #e5dfd0",
+          fontSize: 13, fontFamily: "inherit", boxSizing: "border-box", resize: "vertical", lineHeight: 1.5 }} />
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 9, alignItems: "center" }}>
+        <button onClick={send}
+          style={{ background: "#1FA855", color: "#fff", border: "none", borderRadius: 9, padding: "9px 18px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+          💬 Send on WhatsApp
+        </button>
+        <a href={"tel:" + s.p}
+          style={{ background: "#241E1A", color: "#fff", borderRadius: 9, padding: "9px 16px", fontWeight: 800, fontSize: 12.5, textDecoration: "none" }}>
+          📞 Call instead
+        </a>
+        <button onClick={() => { try { navigator.clipboard.writeText(text); setSaved("copied"); setTimeout(() => setSaved(""), 1500); } catch (e) {} }}
+          style={{ background: "#fff", border: "1.5px solid #E0D7C4", color: "#5c584e", borderRadius: 9, padding: "9px 14px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
+          {saved === "copied" ? "✓ Copied" : "Copy"}
+        </button>
+        <button onClick={saveDefault}
+          style={{ background: "none", border: "none", color: BRAND.green, fontWeight: 800, fontSize: 12, cursor: "pointer", textDecoration: "underline" }}>
+          {saved === "saved" ? "✓ Saved as default" : "Save this wording as my default"}
+        </button>
+        {!done && (
+          <button onClick={markDone}
+            style={{ marginLeft: "auto", background: "none", border: "none", color: "#8a857a", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+            Mark as contacted
+          </button>
+        )}
+      </div>
+      {done ? (
+        <div style={{ marginTop: 9, background: "#EAF6EE", border: "1px solid #BFE0CB", borderRadius: 8, padding: "8px 11px", fontSize: 12.5, fontWeight: 800, color: "#177245" }}>
+          ✓ Marked as contacted — this shows on your other devices too.
+        </div>
+      ) : (
+        <div style={{ fontSize: 11, color: "#8a857a", marginTop: 7 }}>
+          {"{name}"} is filled in automatically. Sending marks them contacted, on every device.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Sessions({ settings, saveSettings }) {
   const base = (typeof FIREBASE_RTDB_URL !== "undefined" && FIREBASE_RTDB_URL) ? FIREBASE_RTDB_URL.replace(/\/+$/, "") : null;
   const [preset, setPreset] = useState("3");          // "1" | "3" | "7" | "30" | "90" | "365" | "custom"
   const [from, setFrom] = useState(shiftKey(-6));
@@ -1709,12 +1850,10 @@ function Sessions() {
                       {" · "}{s.d ? (s.d > 59 ? Math.round(s.d / 60) + " min" : s.d + " sec") : "0 sec"} on site
                     </span>
                     <span style={{ background: o2.bg, color: o2.col, borderRadius: 6, padding: "3px 10px", fontSize: 11.5, fontWeight: 800 }}>{o2.txt}</span>
-                    <a href={"https://wa.me/91" + s.p + "?text=" + encodeURIComponent("Hi " + (s.nm || "") + ", this is Hunt & Eat. You were looking at our menu — can I help you place the order?")}
-                      target="_blank" rel="noreferrer"
-                      style={{ marginLeft: "auto", background: "#1FA855", color: "#fff", borderRadius: 8, padding: "7px 14px", fontWeight: 800, fontSize: 12.5, textDecoration: "none" }}>
-                      💬 WhatsApp
-                    </a>
-                    <a href={"tel:" + s.p} style={{ background: "#241E1A", color: "#fff", borderRadius: 8, padding: "7px 14px", fontWeight: 800, fontSize: 12.5, textDecoration: "none" }}>📞 Call</a>
+                    <span style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <WinBack s={s} outcomeTxt={o2.txt} settings={settings} saveSettings={saveSettings} base={base} ns={VISIT_NS} />
+                      <a href={"tel:" + s.p} style={{ background: "#241E1A", color: "#fff", borderRadius: 8, padding: "7px 14px", fontWeight: 800, fontSize: 12.5, textDecoration: "none" }}>📞 Call</a>
+                    </span>
                   </div>
                 );
               })}
@@ -1766,6 +1905,11 @@ function Sessions() {
                           💬 {s.nm ? s.nm + " · " : ""}{s.p}
                         </a>
                       )}
+                      {s.p && s.fu && (
+                        <span style={{ background: "#EAF6EE", color: "#177245", border: "1px solid #BFE0CB", borderRadius: 6, padding: "2px 9px", fontSize: 11, fontWeight: 800 }}>
+                          ✓ Contacted
+                        </span>
+                      )}
                       <span style={{ background: o.bg, color: o.col, borderRadius: 6, padding: "3px 10px", fontSize: 11.5, fontWeight: 800 }}>{o.txt}</span>
                     </div>
                   </div>
@@ -1777,6 +1921,12 @@ function Sessions() {
                       Came from {s.r && s.r !== "direct" ? s.r.replace(/^https?:\/\//, "").split("/")[0] : "a direct link or WhatsApp"} · screen {s.w}×{s.h}
                     </div>
                     <Typed vals={s.fv} ev={s.e} />
+                    {s.p && (
+                      <div style={{ display: "flex", marginBottom: 11, flexWrap: "wrap", gap: 8 }}
+                        onClick={(e) => e.stopPropagation()}>
+                        <WinBack s={s} outcomeTxt={o.txt} settings={settings} saveSettings={saveSettings} base={base} ns={VISIT_NS} />
+                      </div>
+                    )}
                     <div style={{ display: "grid", gap: 4 }}>
                       {(s.e || []).map((x, i) => {
                         const def = EV[x[1]] || { icon: "•", label: () => x[1] };
