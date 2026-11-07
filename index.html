@@ -829,7 +829,9 @@ const kgTxt = (g) => (g >= 1000 ? (Math.round(g / 100) / 10) + " kg" : Math.roun
 
 function offerLive(o, at) {
   if (!o || o.active === false) return false;
-  if (!o.giftId || !(Number(o.buyGrams) > 0)) return false;
+  if (!o.giftId) return false;
+  if (offerKind(o) === "weight") { if (!(Number(o.buyGrams) > 0)) return false; }
+  else if (!(Array.isArray(o.buyIds) && o.buyIds.length)) return false;
   const d = dkey(at || new Date());
   if (o.from && d < o.from) return false;
   if (o.to && d > o.to) return false;
@@ -849,15 +851,47 @@ function weighCart(cartItems) {
 }
 
 // every free line this basket has earned
-function earnedGifts(cartItems, offers, products, at) {
+/* An offer is triggered one of two ways.
+
+   buyMode "items"  — the named products themselves. "Buy the 1 Kg mutton
+                      pack" means that pack, not a kilo's worth of anything
+                      in the Mutton category. This is the usual one.
+   buyMode "weight" — total weight bought in a category, for a target like
+                      "spend 2 kg across any mutton cut".
+   Returns { have, need, unit } in the offer's own terms so the basket can
+   say how far off the customer is. */
+/* An offer saved before pack-triggers existed has no buyMode. Work it out
+   from what the offer actually carries, so nothing silently stops paying. */
+function offerKind(o) {
+  if (o && (o.buyMode === "weight" || o.buyMode === "items")) return o.buyMode;
+  if (o && Array.isArray(o.buyIds) && o.buyIds.length) return "items";
+  if (o && Number(o.buyGrams) > 0) return "weight";
+  return "items";
+}
+
+function offerProgress(o, cartItems) {
+  if (offerKind(o) === "weight") {
+    const w = weighCart(cartItems);
+    return { have: o.buyCat === "any" || !o.buyCat ? w.all : (w.byCat[o.buyCat] || 0),
+             need: Number(o.buyGrams) || 0, unit: "g" };
+  }
+  const ids = Array.isArray(o.buyIds) ? o.buyIds : [];
+  let n = 0;
+  (cartItems || []).forEach(({ p, qty }) => { if (p && ids.indexOf(p.id) >= 0) n += qty; });
+  return { have: n, need: Math.max(1, Number(o.buyQty) || 1), unit: "pcs" };
+}
+
+const giftWorth = (g) => (g && g.p ? (Number(g.p.price) || 0) * g.qty : 0);
+
+/* oneOffer (the default): a basket that qualifies for two offers takes the
+   one worth most, never both. Turn it off in Admin to let them stack. */
+function earnedGifts(cartItems, offers, products, at, oneOffer) {
   const out = [];
   if (!Array.isArray(offers) || !offers.length || !cartItems || !cartItems.length) return out;
-  const w = weighCart(cartItems);
   offers.forEach((o) => {
     if (!offerLive(o, at)) return;
-    const need = Number(o.buyGrams);
-    const have = o.buyCat === "any" || !o.buyCat ? w.all : (w.byCat[o.buyCat] || 0);
-    if (have < need) return;
+    const { have, need } = offerProgress(o, cartItems);
+    if (need <= 0 || have < need) return;
     let times = o.repeat === false ? 1 : Math.floor(have / need);
     const cap = Number(o.maxGifts) || 0;
     if (cap > 0) times = Math.min(times, cap);
@@ -866,28 +900,35 @@ function earnedGifts(cartItems, offers, products, at) {
     const qty = times * (Number(o.giftQty) || 1);
     if (qty > 0) out.push({ p: gift, qty, free: true, offer: o.name || "Free gift", offerId: o.id });
   });
-  return out;
+  if (oneOffer === false || out.length < 2) return out;
+  let best = out[0];
+  out.forEach((g) => { if (giftWorth(g) > giftWorth(best)) best = g; });
+  return [best];
 }
 
 // the nearest gift still out of reach, for the nudge in the basket
-function nextGift(cartItems, offers, products, at) {
+function nextGift(cartItems, offers, products, at, oneOffer, holding) {
   if (!Array.isArray(offers) || !offers.length) return null;
-  const w = weighCart(cartItems || []);
+  // with one offer per order, only a BETTER gift is worth mentioning
+  const floorWorth = oneOffer !== false && holding && holding.length ? giftWorth(holding[0]) : 0;
   let best = null;
   offers.forEach((o) => {
     if (!offerLive(o, at)) return;
     const gift = (products || []).find((x) => x.id === o.giftId);
     if (!gift || gift.stock === false) return;
-    const need = Number(o.buyGrams);
-    const have = o.buyCat === "any" || !o.buyCat ? w.all : (w.byCat[o.buyCat] || 0);
-    if (have <= 0) return;                          // nothing of that kind in the basket yet
+    const { have, need, unit } = offerProgress(o, cartItems || []);
+    if (need <= 0 || have <= 0) return;             // nothing of that kind in the basket yet
     const cap = Number(o.maxGifts) || 0;
     const got = o.repeat === false ? (have >= need ? 1 : 0) : Math.floor(have / need);
     if (o.repeat === false && got >= 1) return;     // one-shot offer already earned
     if (cap > 0 && got >= cap) return;              // capped out
     const short = need * (got + 1) - have;
     if (short <= 0) return;
-    if (!best || short < best.short) best = { short, gift, offer: o, qty: Number(o.giftQty) || 1 };
+    const qty = Number(o.giftQty) || 1;
+    const worth = (Number(gift.price) || 0) * qty * (got + 1 <= (cap || 99) ? 1 : 1);
+    if (floorWorth && worth <= floorWorth) return;  // no point swapping down
+    const rank = short / need;                      // compare pieces and grams fairly
+    if (!best || rank < best.rank) best = { short, rank, unit, gift, offer: o, qty, upgrade: floorWorth > 0 };
   });
   return best;
 }
@@ -1211,8 +1252,9 @@ function Shop({ products, categories, zones, slots, settings, orders, offers, cu
   const count = cartItems.reduce((s, x) => s + x.qty, 0);
 
   // free gifts earned by this basket, and the nearest one still to come
-  const gifts = earnedGifts(cartItems, offers, products, new Date());
-  const toGo = nextGift(cartItems, offers, products, new Date());
+  const oneOffer = settings.oneOffer !== false;     // default: best offer only
+  const gifts = earnedGifts(cartItems, offers, products, new Date(), oneOffer);
+  const toGo = nextGift(cartItems, offers, products, new Date(), oneOffer, gifts);
   const liveOffers = (offers || []).filter((o) => offerLive(o, new Date()) &&
     (products || []).some((x) => x.id === o.giftId && x.stock !== false));
 
@@ -1374,15 +1416,27 @@ function Shop({ products, categories, zones, slots, settings, orders, offers, cu
                   <div style={{ minWidth: 0 }}>
                     <div className="offertitle">{o.name || ("Free " + (g ? g.name : "gift"))}</div>
                     <div className="offersub">
-                      Buy {kgTxt(Number(o.buyGrams) || 0)}{o.buyCat && o.buyCat !== "any"
-                        ? " of " + (((categories || []).find((c) => c.id === o.buyCat) || {}).name || "")
-                        : ""} — free {g ? g.name : "gift"} added at checkout
+                      {offerKind(o) === "weight"
+                        ? "Buy " + kgTxt(Number(o.buyGrams) || 0) + (o.buyCat && o.buyCat !== "any"
+                            ? " of " + (((categories || []).find((c) => c.id === o.buyCat) || {}).name || "") : "")
+                        : (() => {
+                            const names = (o.buyIds || []).map((id) => ((products || []).find((x) => x.id === id) || {}).name).filter(Boolean);
+                            const q = Math.max(1, Number(o.buyQty) || 1);
+                            if (!names.length) return "Buy the qualifying pack";
+                            return "Buy " + (q > 1 ? q + " × " : "") + (names.length === 1 ? names[0] : names[0] + " or " + (names.length - 1) + " more");
+                          })()}
+                      {" — free "}{g ? g.name : "gift"} added at checkout
                     </div>
                   </div>
                 </div>
               );
             })}
           </div>
+          {liveOffers.length > 1 && settings.oneOffer !== false && (
+            <div style={{ fontSize: 11.5, color: "#8a857a", marginTop: 7 }}>
+              One offer per order — you'll get whichever is worth most.
+            </div>
+          )}
         </section>
       )}
       {/* categories — round photo tiles */}
@@ -1535,7 +1589,7 @@ function Shop({ products, categories, zones, slots, settings, orders, offers, cu
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v6.8</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v7.0</span>
         </div>
       </footer>
 
@@ -1590,8 +1644,12 @@ function Shop({ products, categories, zones, slots, settings, orders, offers, cu
               )}
               {toGo && (
                 <div style={{ marginTop: 11, background: "#EAF6EE", border: "1px solid #BFE0CB", borderRadius: 10, padding: "10px 12px", fontSize: 12.5, color: "#17422B", lineHeight: 1.5 }}>
-                  Add <b>{kgTxt(toGo.short)}</b> more and we'll put in{" "}
-                  <b>{toGo.qty > 1 ? toGo.qty + " × " : ""}{toGo.gift.name}</b> free.
+                  Add <b>{toGo.unit === "pcs"
+                    ? toGo.short + " more " + (toGo.short === 1 ? "pack" : "packs")
+                    : kgTxt(toGo.short) + " more"}</b>
+                  {toGo.upgrade ? " and your free gift becomes " : " and we'll put in "}
+                  <b>{toGo.qty > 1 ? toGo.qty + " × " : ""}{toGo.gift.name}</b>
+                  {toGo.upgrade ? " instead." : " free."}
                 </div>
               )}
               <div style={{ marginTop: 16, fontSize: 14 }}>
@@ -2007,6 +2065,12 @@ function MapPicker({ initial, zones, onSave, close }) {
 
 /* ---------------- checkout ---------------- */
 function Checkout({ cartItems, gifts, subtotal, delFee, total, slots, settings, orders, zones, freeCats, isPre, onAreaKnown, back, done }) {
+  const [openBill, setOpenBill] = useState(false);
+  // what the order is worth against full price: price cuts + free delivery + gifts
+  const savedOnItems = cartItems.reduce((s, x) => s + Math.max(0, (x.p.mrp || 0) - x.p.price) * x.qty, 0);
+  const savedOnGifts = (gifts || []).reduce((s, g) => s + (Number(g.p.price) || 0) * g.qty, 0);
+  const savedOnFee = delFee === 0 && subtotal > 0 ? (Number(settings.deliveryFee) || 0) : 0;
+  const totalSaved = savedOnItems + savedOnGifts + savedOnFee;
   // a pre-book basket is delivered on a chosen future day, never today
   const isPreOrder = cartItems.length > 0 && typeof isPre === "function" && cartItems.every((x) => isPre(x.p));
   // if anything ran out between the basket and this screen, stop here
@@ -2337,12 +2401,67 @@ function Checkout({ cartItems, gifts, subtotal, delFee, total, slots, settings, 
       </div>
 
       <div style={{ background: "#faf7f0", borderRadius: 10, padding: "10px 14px", fontSize: 14, marginBottom: 14 }}>
+        <button type="button" onClick={() => setOpenBill((v) => !v)}
+          style={{ width: "100%", background: "none", border: "none", padding: "2px 0 6px", cursor: "pointer",
+            display: "flex", justifyContent: "space-between", alignItems: "center", font: "inherit", color: BRAND.green, fontWeight: 800, fontSize: 13 }}>
+          <span>{openBill ? "Hide breakup" : "View breakup"} {openBill ? "▴" : "▾"}</span>
+          <span style={{ color: "#8a857a", fontWeight: 600, fontSize: 12 }}>
+            {cartItems.length} item{cartItems.length > 1 ? "s" : ""}
+          </span>
+        </button>
+
+        {openBill && (
+          <div style={{ borderTop: "1px dashed #E0D7C4", borderBottom: "1px dashed #E0D7C4", padding: "9px 0", marginBottom: 8 }}>
+            {cartItems.map(({ p, qty }) => (
+              <div key={p.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "3px 0", fontSize: 13 }}>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  {p.name} <span style={{ color: "#8a857a" }}>× {qty}</span>
+                </span>
+                <span style={{ whiteSpace: "nowrap" }}>
+                  {p.mrp > p.price && (
+                    <span style={{ color: "#a39e93", textDecoration: "line-through", marginRight: 6, fontSize: 12 }}>
+                      {rup(p.mrp * qty)}
+                    </span>
+                  )}
+                  <b>{rup(p.price * qty)}</b>
+                </span>
+              </div>
+            ))}
+            {(gifts || []).map((g) => (
+              <div key={g.offerId} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "3px 0", fontSize: 13, color: "#177245" }}>
+                <span style={{ flex: 1, minWidth: 0 }}>🎁 {g.p.name} <span style={{ opacity: 0.75 }}>× {g.qty}</span></span>
+                <span style={{ whiteSpace: "nowrap" }}>
+                  <span style={{ color: "#a39e93", textDecoration: "line-through", marginRight: 6, fontSize: 12 }}>
+                    {rup((g.p.price || 0) * g.qty)}
+                  </span>
+                  <b>FREE</b>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
         <Row l="Item total" r={rup(subtotal)} />
-        <Row l="Delivery" r={delFee === 0 ? "FREE" : rup(delFee)} green={delFee === 0} />
+        {savedOnItems > 0 && <Row l="Price cut on these items" r={"− " + rup(savedOnItems)} green />}
+        <Row l="Delivery"
+          r={delFee === 0
+            ? <span><span style={{ color: "#a39e93", textDecoration: "line-through", marginRight: 6 }}>{rup(settings.deliveryFee || 0)}</span>FREE</span>
+            : rup(delFee)}
+          green={delFee === 0} />
         {(gifts || []).map((g) => (
-          <Row key={g.offerId} l={<span>🎁 {g.p.name} × {g.qty}</span>} r="FREE" green />
+          <Row key={g.offerId}
+            l={<span>🎁 {g.p.name} × {g.qty}</span>}
+            r={<span><span style={{ color: "#a39e93", textDecoration: "line-through", marginRight: 6 }}>{rup((g.p.price || 0) * g.qty)}</span>FREE</span>}
+            green />
         ))}
-        <Row l={<b>To pay</b>} r={<b>{rup(total)}</b>} />
+        <div style={{ borderTop: "2px solid " + BRAND.ink, marginTop: 7, paddingTop: 7 }}>
+          <Row l={<b>To pay</b>} r={<b>{rup(total)}</b>} />
+        </div>
+        {totalSaved > 0 && (
+          <div style={{ marginTop: 8, background: "#EAF6EE", border: "1px solid #BFE0CB", borderRadius: 8, padding: "7px 10px", fontSize: 13, fontWeight: 800, color: "#177245", textAlign: "center" }}>
+            You save {rup(totalSaved)} on this order 🎉
+          </div>
+        )}
       </div>
       {err && <div style={{ color: BRAND.red, fontSize: 13, marginBottom: 10, fontWeight: 600 }}>{err}</div>}
       <button onClick={place} style={{ width: "100%", background: BRAND.green, color: "#fff", border: "none", borderRadius: 12, padding: 14, fontWeight: 800, fontSize: 15, cursor: "pointer" }}>
