@@ -1589,7 +1589,7 @@ function Shop({ products, categories, zones, slots, settings, orders, offers, cu
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v7.0</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v7.2</span>
         </div>
       </footer>
 
@@ -2131,7 +2131,10 @@ function Checkout({ cartItems, gifts, subtotal, delFee, total, slots, settings, 
   // A slot's start hour decides the cut-off. Older or hand-added slots can
   // carry a missing or text value, so read the label when the number is no good.
   const slotStart = (s) => {
-    const n = Number(s && s.start);
+    // a blank start must NOT read as midnight — that silently kills the cut-off
+    const raw = s && s.start;
+    const txt = raw === null || raw === undefined ? "" : String(raw).trim();
+    const n = txt === "" ? NaN : Number(txt);
     if (isFinite(n) && n >= 0 && n <= 23) return n;
     const m = String((s && s.label) || "").match(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)/i);
     if (!m) return null;
