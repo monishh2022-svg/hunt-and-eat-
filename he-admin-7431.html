@@ -366,7 +366,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v6.8</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v7.0</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -463,6 +463,7 @@ function AdminApp() {
         {tab === "riders" && <Riders settings={settings} />}
         {tab === "cash" && <Cash orders={orders} saveOrders={saveOrders} />}
         {tab === "offers" && <Offers offers={core?.offers || []} products={products} cats={categories}
+          settings={settings} saveSettings={(s) => saveCore({ settings: s })}
           save={(o) => saveCore({ offers: o })} saveProducts={(p) => saveCore({ products: p })} />}
         {tab === "slots" && <Slots slots={slots} save={(s) => saveCore({ slots: s })} />}
         {tab === "settings" && <Settings settings={settings} save={(s) => saveCore({ settings: s })} zones={core?.zones || []} saveZones={(z) => saveCore({ zones: z })} />}
@@ -3013,22 +3014,56 @@ function grams(p) {
 const kgTxt = (g) => (g >= 1000 ? (Math.round(g / 100) / 10) + " kg" : Math.round(g) + " g");
 const oid = () => "of" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
 
-function Offers({ offers, products, cats, save, saveProducts }) {
+/* Typing straight into a saved field means one database round-trip per
+   keystroke, which steals the cursor and swallows letters. This keeps what
+   you type on screen and writes it once you pause or move away. */
+function LiveField({ value, onCommit, numeric, min, ...rest }) {
+  const [draft, setDraft] = useState(value == null ? "" : String(value));
+  const touched = useRef(false);
+  const timer = useRef(null);
+  // follow the saved value again only while the field is untouched
+  useEffect(() => {
+    if (!touched.current) setDraft(value == null ? "" : String(value));
+  }, [value]);
+  const push = (v) => {
+    touched.current = false;
+    if (numeric) {
+      const n = Number(v);
+      onCommit(v === "" ? (min == null ? "" : min) : (isFinite(n) ? Math.max(min == null ? 0 : min, Math.round(n)) : (min == null ? 0 : min)));
+    } else onCommit(v);
+  };
+  return (
+    <input {...rest} value={draft}
+      onChange={(e) => {
+        const v = e.target.value;
+        touched.current = true;
+        setDraft(v);
+        if (timer.current) clearTimeout(timer.current);
+        timer.current = setTimeout(() => push(v), 900);   // saves after you pause
+      }}
+      onBlur={() => { if (timer.current) clearTimeout(timer.current); push(draft); }} />
+  );
+}
+
+function Offers({ offers, products, cats, settings, saveSettings, save, saveProducts }) {
+  const oneOffer = (settings || {}).oneOffer !== false;
   const list = Array.isArray(offers) ? offers : [];
   const [open, setOpen] = useState(null);          // which offer's weight list is showing
 
   const edit = (id, patch) => save(list.map((o) => (o.id === id ? { ...o, ...patch } : o)));
   const addOne = () => save(list.concat([{
-    id: oid(), active: true, name: "", buyCat: (cats[0] || {}).id || "any",
-    buyGrams: 1000, giftId: "", giftQty: 1, repeat: true, maxGifts: 5, from: "", to: "",
+    id: oid(), active: true, name: "", buyMode: "items", buyIds: [], buyQty: 1,
+    buyCat: (cats[0] || {}).id || "any", buyGrams: 1000,
+    giftId: "", giftQty: 1, repeat: true, maxGifts: 5, from: "", to: "",
   }]));
   const remove = (o) => {
     if (!window.confirm("Delete this offer?\n\n" + (o.name || "Untitled offer") +
       "\n\nOrders already placed keep their free item. This only stops new ones.")) return;
     save(list.filter((x) => x.id !== o.id));
   };
+  // blank or zero means "go back to reading it off the label"
   const setWeight = (pid, g) => saveProducts(products.map((p) =>
-    (p.id === pid ? { ...p, grams: g === "" ? undefined : Math.max(0, Math.round(Number(g) || 0)) } : p)));
+    (p.id === pid ? { ...p, grams: (g === "" || !Number(g)) ? undefined : Math.max(0, Math.round(Number(g))) } : p)));
 
   const box = { background: "#fff", border: "1px solid #E5DFD0", borderRadius: 12, padding: 16, marginBottom: 14 };
   const lbl = { display: "grid", gap: 4, fontSize: 12, fontWeight: 700, color: "#5c584e" };
@@ -3048,16 +3083,41 @@ function Offers({ offers, products, cats, save, saveProducts }) {
         </button>
       </div>
 
+      <div style={{ background: "#fff", border: "1.5px solid #E5DFD0", borderRadius: 12, padding: "12px 15px", marginBottom: 14 }}>
+        <div style={{ fontWeight: 800, fontSize: 13.5, marginBottom: 8 }}>When an order qualifies for more than one offer</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {[[true, "Give only the best one"], [false, "Give all of them"]].map(([v, label]) => (
+            <button key={String(v)} onClick={() => saveSettings({ ...(settings || {}), oneOffer: v })}
+              style={{ border: "1.5px solid " + (oneOffer === v ? BRAND.green : "#E0D7C4"),
+                background: oneOffer === v ? BRAND.green : "#fff", color: oneOffer === v ? "#fff" : "#5c584e",
+                borderRadius: 999, padding: "7px 15px", fontWeight: 800, fontSize: 12.5, cursor: "pointer" }}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div style={{ fontSize: 11.5, color: "#8a857a", marginTop: 7, lineHeight: 1.5 }}>
+          {oneOffer
+            ? "A basket that earns two gifts gets the dearer one only, and the shop says so."
+            : "A basket that earns two gifts gets both — watch what that costs you on a large order."}
+        </div>
+      </div>
+
       {!list.length && (
         <div style={{ ...box, textAlign: "center", color: "#8a857a", fontSize: 13.5, lineHeight: 1.6 }}>
           No offers running. Tap <b>+ New offer</b> to start one — for example<br />
-          <b>buy 2 kg of Mutton, get a 500 g chicken pack free</b>.
+          <b>buy the 2 Kg mutton pack, get a 500 g chicken pack free</b>.
         </div>
       )}
 
       {list.map((o) => {
         const gift = products.find((x) => x.id === o.giftId);
         const cat = cats.find((c) => c.id === o.buyCat);
+        // an offer saved before pack-triggers existed has no buyMode
+        const byWeight = o.buyMode === "weight" ||
+          (!o.buyMode && !(Array.isArray(o.buyIds) && o.buyIds.length) && Number(o.buyGrams) > 0);
+        const picked = Array.isArray(o.buyIds) ? o.buyIds : [];
+        const pickedNames = picked.map((id) => (products.find((x) => x.id === id) || {}).name).filter(Boolean);
+        const buyQty = Math.max(1, Number(o.buyQty) || 1);
         const need = Number(o.buyGrams) || 0;
         const inCat = products.filter((p) => o.buyCat === "any" || p.cat === o.buyCat);
         const noWeight = inCat.filter((p) => grams(p) === 0);
@@ -3065,9 +3125,11 @@ function Offers({ offers, products, cats, save, saveProducts }) {
         if (!o.giftId) warn.push("Pick the free item — nothing is given away until you do.");
         else if (!gift) warn.push("The free item has been deleted from the menu. Pick another.");
         else if (gift.stock === false) warn.push("The free item is marked sold out, so this offer is not running.");
-        if (need <= 0) warn.push("Set how much they must buy.");
-        if (gift && cat && gift.cat === o.buyCat) warn.push("The gift is in the same category they are buying from — it counts towards its own target.");
-        if (noWeight.length) warn.push(noWeight.length === 1
+        if (byWeight && need <= 0) warn.push("Set how much they must buy.");
+        if (!byWeight && !picked.length) warn.push("Tick at least one pack — nothing triggers this offer yet.");
+        if (!byWeight && picked.indexOf(o.giftId) >= 0) warn.push("The free item is also one of the packs that earns it, so buying it earns another one.");
+        if (byWeight && gift && cat && gift.cat === o.buyCat) warn.push("The gift is in the same category they are buying from — it counts towards its own target.");
+        if (byWeight && noWeight.length) warn.push(noWeight.length === 1
           ? "One item in this category has no weight, so it counts as zero towards the target. Check the list below."
           : noWeight.length + " items in this category have no weight, so they count as zero towards the target. Check the list below.");
 
@@ -3080,7 +3142,7 @@ function Offers({ offers, products, cats, save, saveProducts }) {
             borderWidth: o.active === false ? 1 : 1.5, opacity: o.active === false ? 0.65 : 1 }}>
 
             <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
-              <input value={o.name || ""} onChange={(e) => edit(o.id, { name: e.target.value })}
+              <LiveField value={o.name || ""} onCommit={(v) => edit(o.id, { name: v })}
                 placeholder="Offer name — shown to the customer"
                 style={{ ...inp, flex: 1, minWidth: 220, fontWeight: 700 }} />
               <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
@@ -3092,18 +3154,75 @@ function Offers({ offers, products, cats, save, saveProducts }) {
               </button>
             </div>
 
+            <div style={{ display: "flex", gap: 8, marginBottom: 11, flexWrap: "wrap" }}>
+              {[["items", "🏷️ Buying a particular pack"], ["weight", "⚖️ Buying a total weight"]].map(([m, label]) => (
+                <button key={m} onClick={() => edit(o.id, { buyMode: m })}
+                  style={{ border: "1.5px solid " + ((byWeight ? "weight" : "items") === m ? BRAND.green : "#E0D7C4"),
+                    background: (byWeight ? "weight" : "items") === m ? BRAND.green : "#fff",
+                    color: (byWeight ? "weight" : "items") === m ? "#fff" : "#5c584e",
+                    borderRadius: 999, padding: "7px 15px", fontWeight: 800, fontSize: 12.5, cursor: "pointer" }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {!byWeight && (
+              <div style={{ border: "1px solid #E5DFD0", borderRadius: 10, marginBottom: 11, overflow: "hidden" }}>
+                <div style={{ background: "#faf7f0", padding: "7px 11px", fontSize: 12, fontWeight: 700, color: "#5c584e", display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                  <span>Tick the pack (or packs) that earn this gift</span>
+                  <span style={{ fontWeight: 500, color: picked.length ? "#17422B" : BRAND.red }}>
+                    {picked.length ? picked.length + " ticked" : "none ticked yet"}
+                  </span>
+                </div>
+                <div style={{ maxHeight: 190, overflowY: "auto" }}>
+                  {cats.map((c) => {
+                    const inC = products.filter((p) => p.cat === c.id);
+                    if (!inC.length) return null;
+                    return (
+                      <div key={c.id}>
+                        <div style={{ background: "#FCFAF4", padding: "4px 11px", fontSize: 11, fontWeight: 800, color: "#8a857a", letterSpacing: 0.4, borderTop: "1px solid #F0EBE0" }}>
+                          {c.name.toUpperCase()}
+                        </div>
+                        {inC.map((p) => (
+                          <label key={p.id} style={{ display: "flex", gap: 9, alignItems: "center", padding: "6px 11px", fontSize: 12.5, cursor: "pointer", borderTop: "1px solid #F6F2E9" }}>
+                            <input type="checkbox" checked={picked.indexOf(p.id) >= 0}
+                              onChange={(e) => edit(o.id, { buyIds: e.target.checked
+                                ? picked.concat([p.id]) : picked.filter((x) => x !== p.id) })} />
+                            <span style={{ flex: 1, minWidth: 0 }}>{p.name}</span>
+                            <span style={{ color: "#8a857a", fontSize: 11.5 }}>{rup(p.price)}</span>
+                          </label>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10 }}>
-              <label style={lbl}>They must buy from
-                <select value={o.buyCat || "any"} onChange={(e) => edit(o.id, { buyCat: e.target.value })} style={inp}>
-                  <option value="any">Anything on the menu</option>
-                  {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-              </label>
-              <label style={lbl}>At least (grams)
-                <input type="number" min="0" step="50" value={o.buyGrams == null ? "" : o.buyGrams}
-                  onChange={(e) => edit(o.id, { buyGrams: Math.max(0, Number(e.target.value) || 0) })} style={inp} />
-                <span style={{ fontWeight: 500, color: "#8a857a", fontSize: 11 }}>{kgTxt(need)}</span>
-              </label>
+              {byWeight ? (
+                <React.Fragment>
+                  <label style={lbl}>They must buy from
+                    <select value={o.buyCat || "any"} onChange={(e) => edit(o.id, { buyCat: e.target.value })} style={inp}>
+                      <option value="any">Anything on the menu</option>
+                      {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </label>
+                  <label style={lbl}>At least (grams)
+                    <LiveField type="number" min={0} step="50" numeric value={o.buyGrams == null ? "" : o.buyGrams}
+                      onCommit={(v) => edit(o.id, { buyGrams: v })} style={inp} />
+                    <span style={{ fontWeight: 500, color: "#8a857a", fontSize: 11 }}>{kgTxt(need)}</span>
+                  </label>
+                </React.Fragment>
+              ) : (
+                <label style={lbl}>How many must they buy
+                  <LiveField type="number" min={1} step="1" numeric value={o.buyQty == null ? 1 : o.buyQty}
+                    onCommit={(v) => edit(o.id, { buyQty: v })} style={inp} />
+                  <span style={{ fontWeight: 500, color: "#8a857a", fontSize: 11 }}>
+                    counted across every pack ticked above
+                  </span>
+                </label>
+              )}
               <label style={lbl}>Free item
                 <select value={o.giftId || ""} onChange={(e) => edit(o.id, { giftId: e.target.value })} style={inp}>
                   <option value="">— choose —</option>
@@ -3111,12 +3230,12 @@ function Offers({ offers, products, cats, save, saveProducts }) {
                 </select>
               </label>
               <label style={lbl}>How many free
-                <input type="number" min="1" step="1" value={o.giftQty == null ? 1 : o.giftQty}
-                  onChange={(e) => edit(o.id, { giftQty: Math.max(1, Number(e.target.value) || 1) })} style={inp} />
+                <LiveField type="number" min={1} step="1" numeric value={o.giftQty == null ? 1 : o.giftQty}
+                  onCommit={(v) => edit(o.id, { giftQty: v })} style={inp} />
               </label>
               <label style={lbl}>Most gifts per order
-                <input type="number" min="0" step="1" value={o.maxGifts == null ? "" : o.maxGifts}
-                  onChange={(e) => edit(o.id, { maxGifts: Math.max(0, Number(e.target.value) || 0) })} style={inp} />
+                <LiveField type="number" min={0} step="1" numeric value={o.maxGifts == null ? "" : o.maxGifts}
+                  onCommit={(v) => edit(o.id, { maxGifts: v })} style={inp} />
                 <span style={{ fontWeight: 500, color: "#8a857a", fontSize: 11 }}>0 = no limit</span>
               </label>
               <label style={lbl}>Running from
@@ -3133,11 +3252,15 @@ function Offers({ offers, products, cats, save, saveProducts }) {
               </label>
             </div>
 
-            {need > 0 && gift && (
+            {gift && (byWeight ? need > 0 : picked.length > 0) && (
               <div style={{ marginTop: 12, background: "#EAF6EE", border: "1px solid #BFE0CB", borderRadius: 9, padding: "10px 12px", fontSize: 12.5, lineHeight: 1.6, color: "#17422B" }}>
-                <b>In plain words:</b> buy {kgTxt(need)}{cat ? " of " + cat.name : " of anything"} and
-                we add <b>{(Number(o.giftQty) || 1) > 1 ? (Number(o.giftQty) || 1) + " × " : ""}{gift.name}</b> free.
-                {" "}A {kgTxt(sample)} order earns <b>{capped * (Number(o.giftQty) || 1)}</b>
+                <b>In plain words:</b>{" "}
+                {byWeight
+                  ? "buy " + kgTxt(need) + (cat ? " of " + cat.name : " of anything")
+                  : "buy " + (buyQty > 1 ? buyQty + " × " : "") + pickedNames.join(" or ")}
+                {" "}and we add <b>{(Number(o.giftQty) || 1) > 1 ? (Number(o.giftQty) || 1) + " × " : ""}{gift.name}</b> free.
+                {" "}{byWeight ? "A " + kgTxt(sample) + " order" : "Buying " + (buyQty * 3) + " of them"} earns
+                {" "}<b>{capped * (Number(o.giftQty) || 1)}</b>
                 {" "}— worth {rup((gift.price || 0) * capped * (Number(o.giftQty) || 1))} to you.
               </div>
             )}
@@ -3148,12 +3271,12 @@ function Offers({ offers, products, cats, save, saveProducts }) {
               </div>
             ))}
 
-            <button onClick={() => setOpen(open === o.id ? null : o.id)}
+            {byWeight && <button onClick={() => setOpen(open === o.id ? null : o.id)}
               style={{ marginTop: 10, background: "none", border: "none", color: BRAND.green, fontSize: 12.5, fontWeight: 800, cursor: "pointer", padding: 0, textDecoration: "underline" }}>
               {open === o.id ? "Hide" : "Check"} what each item counts as ▾
-            </button>
+            </button>}
 
-            {open === o.id && (
+            {byWeight && open === o.id && (
               <div style={{ marginTop: 9, border: "1px solid #E5DFD0", borderRadius: 9, overflow: "hidden" }}>
                 <div style={{ background: "#faf7f0", padding: "7px 11px", fontSize: 11.5, color: "#8a857a", lineHeight: 1.5 }}>
                   Read from the gross weight. Where it is a range, the lower number is used.
@@ -3166,9 +3289,9 @@ function Offers({ offers, products, cats, save, saveProducts }) {
                     <span style={{ fontWeight: 800, minWidth: 66, textAlign: "right", color: grams(p) ? "#17422B" : BRAND.red }}>
                       {grams(p) ? kgTxt(grams(p)) : "counts 0"}
                     </span>
-                    <input type="number" min="0" step="50" placeholder="g"
+                    <LiveField type="number" min={0} step="50" placeholder="g"
                       value={p.grams == null ? "" : p.grams}
-                      onChange={(e) => setWeight(p.id, e.target.value)}
+                      onCommit={(v) => setWeight(p.id, v)}
                       style={{ ...inp, width: 78, padding: "5px 7px", fontSize: 12 }} />
                   </div>
                 ))}
