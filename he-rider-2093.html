@@ -403,7 +403,14 @@ function App() {
                 </span>
               </div>
               <div style={{ fontSize: 12.5, color: "#8a857a", margin: "2px 0 6px" }}>🕐 {o.slotDate} · {o.slotLabel} · <b style={{ color: out ? "#B07A1A" : BRAND.red }}>{o.status}</b></div>
-              <div style={{ fontSize: 13.5, margin: "0 0 6px" }}>{o.items.map((i) => `${i.qty}× ${i.name}`).join(" · ")}</div>
+              <div style={{ fontSize: 13.5, margin: "0 0 6px" }}>
+                {o.items.filter((i) => !i.free).map((i) => `${i.qty}× ${i.name}`).join(" · ")}
+                {o.items.some((i) => i.free) && (
+                  <span style={{ color: "#8E6A1F", fontWeight: 800 }}>
+                    {"  ·  🎁 "}{o.items.filter((i) => i.free).map((i) => `${i.qty}× ${i.name}`).join(", ")}{" FREE"}
+                  </span>
+                )}
+              </div>
               <div style={{ fontSize: 13.5, fontWeight: 700 }}>👤 {o.name}</div>
               <div style={{ fontSize: 13, color: "#5c584e", marginBottom: 10 }}>📍 {o.address}, {o.pincode}</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
