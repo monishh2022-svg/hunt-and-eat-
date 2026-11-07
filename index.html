@@ -804,8 +804,97 @@ function Booting() {
   );
 }
 
+/* =====================================================================
+   FREE-GIFT OFFERS   e.g. "Buy 2 kg mutton, get 1/2 kg chicken free"
+
+   Weight is read from the product's gross weight text. Where that text is
+   a range — "1.1 - 1.3 Kg" — the LOWER number is used, so a customer is
+   never told they are short when they are not. An item with no weight on
+   it (eggs, offal sold by the piece) counts as nothing towards a kilo
+   target; put a number in the admin's "counts as" box to change that.
+   Free gifts never count towards earning the next gift.
+===================================================================== */
+function grams(p) {
+  if (!p) return 0;
+  const own = Number(p.grams);
+  if (isFinite(own) && own > 0) return Math.round(own);        // set by hand in Admin
+  const txt = String(p.gross || p.net || "");
+  const m = txt.match(/(\d+(?:[.,]\d+)?)/);                    // first number = lower bound
+  if (!m) return 0;
+  const n = parseFloat(m[1].replace(",", "."));
+  if (!isFinite(n) || n <= 0) return 0;
+  return /k\s*g/i.test(txt) ? Math.round(n * 1000) : Math.round(n);
+}
+const kgTxt = (g) => (g >= 1000 ? (Math.round(g / 100) / 10) + " kg" : Math.round(g) + " g");
+
+function offerLive(o, at) {
+  if (!o || o.active === false) return false;
+  if (!o.giftId || !(Number(o.buyGrams) > 0)) return false;
+  const d = dkey(at || new Date());
+  if (o.from && d < o.from) return false;
+  if (o.to && d > o.to) return false;
+  return true;
+}
+
+// weight bought, per category and overall
+function weighCart(cartItems) {
+  const byCat = {}; let all = 0;
+  (cartItems || []).forEach(({ p, qty }) => {
+    if (!p) return;
+    const g = grams(p) * qty;
+    byCat[p.cat] = (byCat[p.cat] || 0) + g;
+    all += g;
+  });
+  return { byCat, all };
+}
+
+// every free line this basket has earned
+function earnedGifts(cartItems, offers, products, at) {
+  const out = [];
+  if (!Array.isArray(offers) || !offers.length || !cartItems || !cartItems.length) return out;
+  const w = weighCart(cartItems);
+  offers.forEach((o) => {
+    if (!offerLive(o, at)) return;
+    const need = Number(o.buyGrams);
+    const have = o.buyCat === "any" || !o.buyCat ? w.all : (w.byCat[o.buyCat] || 0);
+    if (have < need) return;
+    let times = o.repeat === false ? 1 : Math.floor(have / need);
+    const cap = Number(o.maxGifts) || 0;
+    if (cap > 0) times = Math.min(times, cap);
+    const gift = (products || []).find((x) => x.id === o.giftId);
+    if (!gift || gift.stock === false) return;      // never promise what we cannot send
+    const qty = times * (Number(o.giftQty) || 1);
+    if (qty > 0) out.push({ p: gift, qty, free: true, offer: o.name || "Free gift", offerId: o.id });
+  });
+  return out;
+}
+
+// the nearest gift still out of reach, for the nudge in the basket
+function nextGift(cartItems, offers, products, at) {
+  if (!Array.isArray(offers) || !offers.length) return null;
+  const w = weighCart(cartItems || []);
+  let best = null;
+  offers.forEach((o) => {
+    if (!offerLive(o, at)) return;
+    const gift = (products || []).find((x) => x.id === o.giftId);
+    if (!gift || gift.stock === false) return;
+    const need = Number(o.buyGrams);
+    const have = o.buyCat === "any" || !o.buyCat ? w.all : (w.byCat[o.buyCat] || 0);
+    if (have <= 0) return;                          // nothing of that kind in the basket yet
+    const cap = Number(o.maxGifts) || 0;
+    const got = o.repeat === false ? (have >= need ? 1 : 0) : Math.floor(have / need);
+    if (o.repeat === false && got >= 1) return;     // one-shot offer already earned
+    if (cap > 0 && got >= cap) return;              // capped out
+    const short = need * (got + 1) - have;
+    if (short <= 0) return;
+    if (!best || short < best.short) best = { short, gift, offer: o, qty: Number(o.giftQty) || 1 };
+  });
+  return best;
+}
+
 function App() {
   const [products, setProducts] = useState(DEFAULT_PRODUCTS);
+  const [offers, setOffers] = useState([]);
   const [categories, setCategories] = useState(CATEGORIES.slice(1));
   const [zones, setZones] = useState([]);
   const [slots, setSlots] = useState(DEFAULT_SLOTS);
@@ -825,6 +914,7 @@ function App() {
       } catch { coreOk = false; } // read failed — use defaults locally, never overwrite the database
       if (data) {
         setProducts(data.products || DEFAULT_PRODUCTS);
+        setOffers(data.offers || []);
         setCategories(data.categories && data.categories.length ? data.categories : CATEGORIES.slice(1));
         setZones(data.zones || []);
         setSlots(data.slots || DEFAULT_SLOTS);
@@ -848,6 +938,7 @@ function App() {
       const d = r ? JSON.parse(r.value) : null;
       if (!d) return;
       if (d.products) setProducts(d.products);
+      setOffers(d.offers || []);
       if (d.categories && d.categories.length) setCategories(d.categories);
       if (d.slots) setSlots(d.slots);
       if (d.zones) setZones(d.zones);
@@ -940,6 +1031,16 @@ function App() {
         @media (prefers-reduced-motion: reduce) {
           .ok-pop, .wa-cta, .ok-tick { animation: none; }
         }
+        /* ---- live offers strip ---- */
+        .offerstrip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+        .offerstrip::-webkit-scrollbar { display: none; }
+        .offercard { flex: 0 0 auto; max-width: 340px; display: flex; gap: 10px; align-items: center;
+          background: linear-gradient(135deg,#FFFBF0,#FDF1D6); border: 1.5px dashed #C9A227;
+          border-radius: 13px; padding: 10px 14px; }
+        .offergift { font-size: 22px; line-height: 1; flex: 0 0 auto; }
+        .offertitle { font-weight: 800; font-size: 13.5px; color: #7A5A12; line-height: 1.3; }
+        .offersub { font-size: 11.5px; color: #8a7a55; line-height: 1.35; margin-top: 2px; }
+        @media (max-width: 640px) { .offercard { max-width: 290px; padding: 9px 12px; } .offertitle { font-size: 12.5px; } }
         /* ---- round category tiles ---- */
         .catgrid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 20px 10px; }
         .cattile { background: none; border: none; padding: 0; cursor: pointer; display: flex; flex-direction: column;
@@ -1001,13 +1102,13 @@ function App() {
         @keyframes fadeup { from { opacity: 0; transform: translateY(8px);} to { opacity: 1; transform: none; } }
         @media (prefers-reduced-motion: reduce) { .fadeup { animation: none; } }
       `}</style>
-      <Shop products={products} categories={categories} zones={zones} slots={slots} settings={settings} orders={orders} custPhone={custPhone} onPlaceOrder={placeOrder} onRefresh={refreshCatalogue} reviews={reviews} onRate={saveReview} />
+      <Shop products={products} categories={categories} zones={zones} slots={slots} settings={settings} orders={orders} offers={offers} custPhone={custPhone} onPlaceOrder={placeOrder} onRefresh={refreshCatalogue} reviews={reviews} onRate={saveReview} />
     </div>
   );
 }
 
 /* ================================ SHOP ================================ */
-function Shop({ products, categories, zones, slots, settings, orders, custPhone, onPlaceOrder, onRefresh, reviews, onRate }) {
+function Shop({ products, categories, zones, slots, settings, orders, offers, custPhone, onPlaceOrder, onRefresh, reviews, onRate }) {
   // Categories flagged "delivers all over India" can be ordered from anywhere.
   const freeCats = (categories || []).filter((c) => c.zoneFree).map((c) => c.id);
   const isFreeCat = (id) => freeCats.indexOf(id) >= 0;
@@ -1108,6 +1209,12 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
   const delFee = subtotal >= settings.freeAbove || subtotal === 0 ? 0 : settings.deliveryFee;
   const total = subtotal + delFee;
   const count = cartItems.reduce((s, x) => s + x.qty, 0);
+
+  // free gifts earned by this basket, and the nearest one still to come
+  const gifts = earnedGifts(cartItems, offers, products, new Date());
+  const toGo = nextGift(cartItems, offers, products, new Date());
+  const liveOffers = (offers || []).filter((o) => offerLive(o, new Date()) &&
+    (products || []).some((x) => x.id === o.giftId && x.stock !== false));
 
   const blockedItems = cartItems.filter((x) => outsideZone && !isFreeCat(x.p.cat));
   const dropBlocked = () => setCart((c) => {
@@ -1256,6 +1363,28 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         );
       })()}
 
+      {liveOffers.length > 0 && (
+        <section style={{ maxWidth: 1100, margin: "0 auto", padding: "18px 16px 0" }}>
+          <div className="offerstrip">
+            {liveOffers.map((o) => {
+              const g = (products || []).find((x) => x.id === o.giftId);
+              return (
+                <div key={o.id} className="offercard">
+                  <span className="offergift">🎁</span>
+                  <div style={{ minWidth: 0 }}>
+                    <div className="offertitle">{o.name || ("Free " + (g ? g.name : "gift"))}</div>
+                    <div className="offersub">
+                      Buy {kgTxt(Number(o.buyGrams) || 0)}{o.buyCat && o.buyCat !== "any"
+                        ? " of " + (((categories || []).find((c) => c.id === o.buyCat) || {}).name || "")
+                        : ""} — free {g ? g.name : "gift"} added at checkout
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
       {/* categories — round photo tiles */}
       <section style={{ maxWidth: 1100, margin: "0 auto", padding: "26px 16px 4px" }}>
         <h2 className="display cat-head" style={{ fontSize: 25, fontWeight: 800, margin: "0 0 3px", letterSpacing: "-.01em" }}>
@@ -1406,7 +1535,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v6.7</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v6.8</span>
         </div>
       </footer>
 
@@ -1440,6 +1569,31 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
                   <div style={{ fontWeight: 700, minWidth: 64, textAlign: "right" }}>{rup(p.price * qty)}</div>
                 </div>
               ))}
+              {gifts.length > 0 && (
+                <div style={{ marginTop: 14, border: "1.5px dashed #C9A227", borderRadius: 12, background: "#FFFBF0", padding: "10px 12px" }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: "#8E6A1F", letterSpacing: 0.4, marginBottom: 6 }}>
+                    🎁 FREE WITH YOUR ORDER
+                  </div>
+                  {gifts.map((g) => (
+                    <div key={g.offerId} style={{ display: "flex", gap: 11, alignItems: "center", padding: "7px 0" }}>
+                      <div style={{ width: 40, height: 40, borderRadius: 9, overflow: "hidden", flexShrink: 0 }}>
+                        <ProductImage p={g.p} height={40} fontSize={22} />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: 13.5 }}>{g.p.name} × {g.qty}</div>
+                        <div style={{ fontSize: 11.5, color: "#8E6A1F" }}>{g.offer}</div>
+                      </div>
+                      <div style={{ fontWeight: 800, color: "#177245", fontSize: 13 }}>FREE</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {toGo && (
+                <div style={{ marginTop: 11, background: "#EAF6EE", border: "1px solid #BFE0CB", borderRadius: 10, padding: "10px 12px", fontSize: 12.5, color: "#17422B", lineHeight: 1.5 }}>
+                  Add <b>{kgTxt(toGo.short)}</b> more and we'll put in{" "}
+                  <b>{toGo.qty > 1 ? toGo.qty + " × " : ""}{toGo.gift.name}</b> free.
+                </div>
+              )}
               <div style={{ marginTop: 16, fontSize: 14 }}>
                 <Row l="Item total" r={rup(subtotal)} />
                 {savings > 0 && <Row l="You save" r={"− " + rup(savings)} green />}
@@ -1498,7 +1652,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         </Drawer>
       )}
       {checkout && (
-        <Checkout cartItems={cartItems} subtotal={subtotal} delFee={delFee} total={total}
+        <Checkout cartItems={cartItems} gifts={gifts} subtotal={subtotal} delFee={delFee} total={total}
           slots={slots} settings={settings} orders={orders} zones={zones} freeCats={freeCats} isPre={isPreItem} onAreaKnown={setArea}
           back={() => { setCheckout(false); setCartOpen(true); }}
           done={(order) => { onPlaceOrder(order); setCart({}); setCheckout(false); setPlaced(order); }} />
@@ -1852,7 +2006,7 @@ function MapPicker({ initial, zones, onSave, close }) {
 }
 
 /* ---------------- checkout ---------------- */
-function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders, zones, freeCats, isPre, onAreaKnown, back, done }) {
+function Checkout({ cartItems, gifts, subtotal, delFee, total, slots, settings, orders, zones, freeCats, isPre, onAreaKnown, back, done }) {
   // a pre-book basket is delivered on a chosen future day, never today
   const isPreOrder = cartItems.length > 0 && typeof isPre === "function" && cartItems.every((x) => isPre(x.p));
   // if anything ran out between the basket and this screen, stop here
@@ -1993,7 +2147,9 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
     }
     const id = "HE" + Date.now().toString().slice(-6);
     done({
-      id, items: cartItems.map(({ p, qty }) => ({ name: p.name, qty, price: p.price })),
+      id,
+      items: cartItems.map(({ p, qty }) => ({ name: p.name, qty, price: p.price }))
+        .concat((gifts || []).map((g) => ({ name: g.p.name, qty: g.qty, price: 0, free: true, offer: g.offer }))),
       subtotal, delFee, total, ...form,
       slotDate: shipOnly ? dkey(new Date()) : day,
       slotId: shipOnly ? "ship" : slotId,
@@ -2183,6 +2339,9 @@ function Checkout({ cartItems, subtotal, delFee, total, slots, settings, orders,
       <div style={{ background: "#faf7f0", borderRadius: 10, padding: "10px 14px", fontSize: 14, marginBottom: 14 }}>
         <Row l="Item total" r={rup(subtotal)} />
         <Row l="Delivery" r={delFee === 0 ? "FREE" : rup(delFee)} green={delFee === 0} />
+        {(gifts || []).map((g) => (
+          <Row key={g.offerId} l={<span>🎁 {g.p.name} × {g.qty}</span>} r="FREE" green />
+        ))}
         <Row l={<b>To pay</b>} r={<b>{rup(total)}</b>} />
       </div>
       {err && <div style={{ color: BRAND.red, fontSize: 13, marginBottom: 10, fontWeight: 600 }}>{err}</div>}
@@ -2218,7 +2377,9 @@ function Success({ order, settings, close }) {
   const waNumber = (settings?.phone || "").replace(/\D/g, "").slice(-10);
   const waText = encodeURIComponent(
     `🐓 *Hunt & Eat — New Order ${order.id}*\n` +
-    order.items.map((i) => `• ${i.name} ×${i.qty} — ${rup(i.price * i.qty)}`).join("\n") +
+    order.items.map((i) => i.free
+      ? `• ${i.name} ×${i.qty} — FREE 🎁`
+      : `• ${i.name} ×${i.qty} — ${rup(i.price * i.qty)}`).join("\n") +
     `\nTotal: *${rup(order.total)}* (${order.pay === "cod" ? "COD" : "UPI on delivery"})` +
     `\nSlot: ${order.slotDate} · ${order.slotLabel}` +
     `\nName: ${order.name} · 📞 ${order.phone}` +
@@ -2235,6 +2396,9 @@ function Success({ order, settings, close }) {
         <div style={{ background: "#faf7f0", borderRadius: 10, padding: 12, margin: "14px 0", fontSize: 14, textAlign: "left" }}>
           <Row l="Slot" r={`${order.slotDate} · ${order.slotLabel}`} />
           <Row l="Payment" r={order.pay === "cod" ? "Cash on delivery" : "UPI on delivery"} />
+          {(order.items || []).filter((i) => i.free).map((i, n) => (
+            <Row key={n} l={<span>🎁 {i.name} × {i.qty}</span>} r="FREE" green />
+          ))}
           <Row l={<b>To pay</b>} r={<b>{rup(order.total)}</b>} />
         </div>
         <div style={{ background: "#EAF6EE", border: "2px solid #1FA855", borderRadius: 14, padding: "14px 13px 13px", marginBottom: 12 }}>
@@ -2470,7 +2634,7 @@ function Track({ orders, settings, close, reviews, onRate }) {
                       </div>
                     </div>
                     <div style={{ fontSize: 12.5, color: "#5c584e", marginTop: 6 }}>
-                      {o.items.map((i) => `${i.qty}× ${i.name}`).join(" · ")}
+                      {o.items.map((i) => `${i.qty}× ${i.name}` + (i.free ? " (free)" : "")).join(" · ")}
                     </div>
                     <div style={{ fontSize: 11.5, color: BRAND.green, fontWeight: 700, marginTop: 6 }}>
                       {expanded ? "Hide details ▲" : "View tracking ▼"}
