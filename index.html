@@ -1406,7 +1406,7 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v6.6</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v6.7</span>
         </div>
       </footer>
 
@@ -1421,7 +1421,8 @@ function Shop({ products, categories, zones, slots, settings, orders, custPhone,
       )}
 
       {areaOpen && <MapPicker initial={areaLoc} zones={zones} close={() => setAreaOpen(false)} onSave={setArea} />}
-      {detail && <DetailModal p={detail} qty={cart[detail.id] || 0} add={add} pre={isPreItem(detail)} close={() => setDetail(null)} />}
+      {detail && <DetailModal p={detail} qty={cart[detail.id] || 0} add={add} pre={isPreItem(detail)} close={() => setDetail(null)}
+        count={count} goCart={() => { setDetail(null); trackStep("view_cart"); if (onRefresh) onRefresh(); setCartOpen(true); }} />}
       {cartOpen && (
         <Drawer title="Your basket" close={() => setCartOpen(false)}>
           {cartItems.length === 0 ? (
@@ -1550,7 +1551,7 @@ function Stepper({ qty, add }) {
   );
 }
 
-function DetailModal({ p, qty, add, close, pre }) {
+function DetailModal({ p, qty, add, close, pre, count, goCart }) {
   return (
     <Modal close={close}>
       <div style={{ borderRadius: 12, overflow: "hidden" }}><ProductImage p={p} height={170} fontSize={72} /></div>
@@ -1565,6 +1566,9 @@ function DetailModal({ p, qty, add, close, pre }) {
           on its own delivery — so order it separately from fresh meat.
         </div>
       )}
+      {/* the buttons stay pinned to the bottom of the popup, so they are never
+          pushed out of sight on a short laptop screen */}
+      <div style={{ position: "sticky", bottom: -20, background: "#fff", paddingTop: 10, paddingBottom: 2, marginTop: -2, boxShadow: "0 -10px 12px -8px rgba(0,0,0,.08)" }}>
       {p.stock === false ? (
         <div style={{ textAlign: "center", background: "#F4F0E6", border: "1px solid #DDD5C4", borderRadius: 12, padding: "14px 16px" }}>
           <div style={{ fontWeight: 800, color: "#5c584e", fontSize: 15 }}>Sold out</div>
@@ -1577,8 +1581,26 @@ function DetailModal({ p, qty, add, close, pre }) {
           {pre ? "Pre-book" : "Add to basket"} — {rup(p.price)}
         </button>
       ) : (
-        <div style={{ display: "flex", justifyContent: "center" }}><Stepper qty={qty} add={(d) => add(p.id, d)} /></div>
+        /* It is already in the basket. Show how many, and — the important bit —
+           a way straight to the basket, because the cart bar is hidden behind
+           this popup. */
+        <div style={{ display: "grid", gap: 11, justifyItems: "center" }}>
+          <div style={{ fontSize: 12.5, color: "#177245", fontWeight: 800 }}>✓ In your basket</div>
+          <Stepper qty={qty} add={(d) => add(p.id, d)} />
+          {typeof goCart === "function" && (
+            <button onClick={goCart} style={{ width: "100%", background: BRAND.green, color: "#fff", border: "none", borderRadius: 12, padding: "13px 16px", fontWeight: 800, fontSize: 15, cursor: "pointer", display: "flex", justifyContent: "center", gap: 10, alignItems: "center", boxShadow: "0 6px 16px rgba(23,66,43,.28)" }}>
+              <span>Checkout</span>
+              <span style={{ fontWeight: 600, fontSize: 13.5, opacity: 0.92 }}>
+                {count || qty} item{(count || qty) > 1 ? "s" : ""} added →
+              </span>
+            </button>
+          )}
+          <button onClick={close} style={{ background: "none", border: "none", color: "#8a857a", fontSize: 13, fontWeight: 700, cursor: "pointer", padding: "2px 0 0", textDecoration: "underline" }}>
+            Keep shopping
+          </button>
+        </div>
       )}
+      </div>
     </Modal>
   );
 }
