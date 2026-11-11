@@ -1607,7 +1607,7 @@ function Shop({ products, categories, zones, slots, settings, orders, offers, cu
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v7.6</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v7.8</span>
         </div>
       </footer>
 
@@ -1904,30 +1904,51 @@ function checkZones(loc, zones) {
   return { inside: best.inside, zone: best.zone, dist: best.dist, gap: best.gap };
 }
 
+/* Look up the address behind a map pin.
+
+   This used to ask OpenStreetMap, wait however long that took, and only
+   then try the second service — with no time limit on either. OSM rate-
+   limits browser traffic and has thin postcode data around Kundrathur, so
+   customers sat watching a spinner and then got told to type it anyway.
+   Now both are asked at once, each gets 6 seconds, and the first answer
+   carrying a real pincode wins. */
+function withTimeout(url, ms, opts) {
+  const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timer = setTimeout(() => { try { ctrl && ctrl.abort(); } catch (e) {} }, ms);
+  return fetch(url, Object.assign({}, opts || {}, ctrl ? { signal: ctrl.signal } : {}))
+    .then((r) => { clearTimeout(timer); return r; })
+    .catch((e) => { clearTimeout(timer); throw e; });
+}
+
+async function askOSM(lat, lng, ms) {
+  const r = await withTimeout("https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1&lat=" + lat + "&lon=" + lng, ms, { headers: { Accept: "application/json" } });
+  if (!r.ok) throw new Error("osm " + r.status);
+  const d = await r.json(), a = d.address || {};
+  const pin = (a.postcode || "").replace(/\D/g, "").slice(0, 6);
+  const area = a.suburb || a.neighbourhood || a.village || a.town || a.city_district || a.city || "";
+  const road = a.road || "";
+  if (!pin && !area) throw new Error("osm empty");
+  return { pincode: pin, area, road, label: [road, area].filter(Boolean).join(", ") };
+}
+
+async function askBDC(lat, lng, ms) {
+  const r = await withTimeout("https://api.bigdatacloud.net/data/reverse-geocode-client?localityLanguage=en&latitude=" + lat + "&longitude=" + lng, ms);
+  if (!r.ok) throw new Error("bdc " + r.status);
+  const d = await r.json();
+  const pin = (d.postcode || "").replace(/\D/g, "").slice(0, 6);
+  const area = d.locality || d.city || "";
+  if (!pin && !area) throw new Error("bdc empty");
+  return { pincode: pin, area, road: "", label: area };
+}
+
 async function reverseGeocode(lat, lng) {
-  // 1st try: OpenStreetMap Nominatim
-  try {
-    const r = await fetch("https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1&lat=" + lat + "&lon=" + lng, { headers: { Accept: "application/json" } });
-    if (r.ok) {
-      const d = await r.json(), a = d.address || {};
-      const pin = (a.postcode || "").replace(/\D/g, "").slice(0, 6);
-      const area = a.suburb || a.neighbourhood || a.village || a.town || a.city_district || a.city || "";
-      const road = a.road || "";
-      if (pin || area) return { pincode: pin, area, road, label: [road, area].filter(Boolean).join(", ") };
-    }
-  } catch (e) {}
-  // 2nd try: BigDataCloud (free, no key) — covers gaps in OSM postcode data
-  try {
-    const r2 = await fetch("https://api.bigdatacloud.net/data/reverse-geocode-client?localityLanguage=en&latitude=" + lat + "&longitude=" + lng);
-    if (r2.ok) {
-      const d2 = await r2.json();
-      const pin = (d2.postcode || "").replace(/\D/g, "").slice(0, 6);
-      const area = d2.locality || d2.city || d2.localityInfo && d2.localityInfo.administrative && d2.localityInfo.administrative.length
-        ? (d2.locality || d2.city || "") : "";
-      if (pin || area) return { pincode: pin, area, road: "", label: area };
-    }
-  } catch (e) {}
-  return null;
+  const MS = 6000;
+  const tries = [askOSM(lat, lng, MS), askBDC(lat, lng, MS)];
+  const results = await Promise.all(tries.map((pr) => pr.then((v) => v, () => null)));
+  const good = results.filter(Boolean);
+  if (!good.length) return null;
+  // an answer with a pincode beats one without
+  return good.find((g) => /^\d{6}$/.test(g.pincode || "")) || good[0];
 }
 
 function nearestZone(loc, zones) {
@@ -2021,16 +2042,34 @@ function MapPicker({ initial, zones, onSave, close }) {
   };
 
   const locateMe = () => {
-    if (!navigator.geolocation) return setNote("GPS not supported on this device.");
+    if (!navigator.geolocation) return setNote("GPS not supported — drag the pin to your door instead.");
     setNote("Finding your location…");
+    const drop = (p, zoom) => {
+      const ll = { lat: +p.coords.latitude.toFixed(6), lng: +p.coords.longitude.toFixed(6) };
+      setPos(ll);
+      if (mapRef.current && markRef.current) { mapRef.current.setView([ll.lat, ll.lng], zoom); markRef.current.setLatLng([ll.lat, ll.lng]); }
+      return ll;
+    };
     navigator.geolocation.getCurrentPosition(
-      (p) => {
-        const ll = { lat: +p.coords.latitude.toFixed(6), lng: +p.coords.longitude.toFixed(6) };
-        setPos(ll); setNote("");
-        if (mapRef.current && markRef.current) { mapRef.current.setView([ll.lat, ll.lng], 17); markRef.current.setLatLng([ll.lat, ll.lng]); }
+      (p) => {                                   // rough but instant
+        drop(p, 16);
+        setNote("Got you — sharpening…");
+        navigator.geolocation.getCurrentPosition(
+          (p2) => { if (p2.coords.accuracy && p2.coords.accuracy < 120) drop(p2, 17); setNote(""); },
+          () => setNote(""),
+          { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+        );
       },
-      () => setNote("Couldn't get GPS — allow location access, or drag the pin yourself."),
-      { enableHighAccuracy: true, timeout: 9000 }
+      () => {
+        navigator.geolocation.getCurrentPosition(
+          (p) => { drop(p, 17); setNote(""); },
+          (e) => setNote(e && e.code === 1
+            ? "Location is blocked for this site. No problem \u2014 drag the pin below onto your door, then tap Confirm location."
+            : "Couldn't get a GPS fix. No problem \u2014 drag the pin below onto your door, then tap Confirm location."),
+          { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+        );
+      },
+      { enableHighAccuracy: false, timeout: 6000, maximumAge: 120000 }
     );
   };
 
@@ -2143,18 +2182,49 @@ function Checkout({ cartItems, gifts, subtotal, delFee, total, slots, settings, 
   const [waitDone, setWaitDone] = useState(false);
   const [autoPin, setAutoPin] = useState(false);
 
+  /* Asking for a precise GPS fix straight away can take 20–30 seconds indoors
+     and then fail, which is what customers were sitting through. Take a quick
+     rough fix first so the form moves on, then quietly sharpen it. */
   const captureLoc = () => {
     if (!navigator.geolocation) return setErr("GPS not supported on this device — you can continue without it.");
     setLocBusy(true);
+    setErr("");
+    const put = (pos) => {
+      const ll = { lat: +pos.coords.latitude.toFixed(6), lng: +pos.coords.longitude.toFixed(6) };
+      setForm((f) => ({ ...f, loc: ll }));
+      return ll;
+    };
+    const sharpen = () => {
+      try {
+        navigator.geolocation.getCurrentPosition(
+          (p2) => { if (p2.coords.accuracy && p2.coords.accuracy < 120) put(p2); },
+          () => {},
+          { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+        );
+      } catch (e) {}
+    };
     navigator.geolocation.getCurrentPosition(
-      (pos) => { setForm((f) => ({ ...f, loc: { lat: +pos.coords.latitude.toFixed(6), lng: +pos.coords.longitude.toFixed(6) } })); setLocBusy(false); setErr(""); },
-      () => { setLocBusy(false); setErr("Couldn't get GPS — allow location access in your browser, or continue without it."); },
-      { enableHighAccuracy: true, timeout: 9000 }
+      (pos) => { put(pos); setLocBusy(false); setErr(""); sharpen(); },
+      () => {
+        // nothing cached — ask properly, and say what is happening
+        navigator.geolocation.getCurrentPosition(
+          (pos) => { put(pos); setLocBusy(false); setErr(""); },
+          (e) => {
+            setLocBusy(false);
+            setErr(e && e.code === 1
+              ? "Location is blocked for this site. Allow it in your browser settings, or just type your address and pincode — that works too."
+              : "Couldn't get a GPS fix — you can type your address and pincode instead.");
+          },
+          { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+        );
+      },
+      { enableHighAccuracy: false, timeout: 6000, maximumAge: 120000 }
     );
   };
 
   // outside our local zone with an all-India basket -> courier, no slot needed
   const outside = activeZones.length > 0 && form.loc ? !checkZones(form.loc, zones).inside : false;
+  const locInZone = activeZones.length > 0 && !!form.loc && !outside;
   const shipOnly = outside && allShippable;
 
   // A slot's start hour decides the cut-off. Older or hand-added slots can
@@ -2200,14 +2270,23 @@ function Checkout({ cartItems, gifts, subtotal, delFee, total, slots, settings, 
     if (!form.name.trim()) return setErr("Please enter your full name.");
     if (!/^[6-9]\d{9}$/.test(ph)) return setErr("Please enter a valid 10-digit mobile number — it's required so our rider can reach you.");
     if (!form.address.trim()) return setErr("Please enter your full delivery address.");
-    if (!/^\d{6}$/.test(form.pincode.trim())) return setErr("Please enter a valid 6-digit pincode.");
+    /* The pincode is only needed to work out whether we deliver there. When a
+       map pin is already inside a zone, that question is answered — so don't
+       hold up the order over six digits the phone could not look up. */
+    const pinKnown = /^\d{6}$/.test(form.pincode.trim());
+    const pinInZone = activeZones.length > 0 && form.loc && checkZones(form.loc, zones) && checkZones(form.loc, zones).inside;
+    if (!pinKnown && !pinInZone) {
+      return setErr(form.pincode.trim()
+        ? "That pincode doesn't look right — it should be 6 digits."
+        : "Please enter your 6-digit pincode, or set your location on the map and we'll take it from there.");
+    }
     if (soldOut.length) {
       return setErr("Sorry — " + soldOut.map((x) => x.p.name).join(", ") +
         (soldOut.length > 1 ? " have " : " has ") + "just sold out. Please go back and remove " +
         (soldOut.length > 1 ? "them" : "it") + " from your basket.");
     }
     if (activeZones.length) {
-      if (!form.loc) return setErr("Please set your delivery location on the map — we serve only inside our delivery area.");
+      if (!form.loc) return setErr("We need your spot on the map — tap \u201c\u{1F5FA}\uFE0F Set your location on map\u201d above. If GPS won't work on your phone, you can drag the pin to your door by hand and tap Confirm.");
       const zc = checkZones(form.loc, zones);
       if (onAreaKnown) onAreaKnown(form.loc);
       if (!zc.inside) {
@@ -2311,12 +2390,14 @@ function Checkout({ cartItems, gifts, subtotal, delFee, total, slots, settings, 
 
         <label style={fieldLbl}>
           <span>Pincode<Req /></span>
-          <input inputMode="numeric" maxLength={6} placeholder="6-digit pincode" value={form.pincode}
+          <input inputMode="numeric" maxLength={6} placeholder={locInZone ? "6-digit pincode (optional)" : "6-digit pincode"} value={form.pincode}
             onChange={(e) => { setAutoPin(false); setForm({ ...form, pincode: e.target.value.replace(/\D/g, "").slice(0, 6) }); }}
             style={{ ...inp, borderColor: autoPin ? "#177245" : "#e5dfd0", background: autoPin ? "#F5FBF7" : "#fff" }} />
           {autoPin
             ? <span style={{ fontSize: 11.5, color: "#177245", fontWeight: 700 }}>✓ Filled automatically from your map pin — edit if it's wrong</span>
-            : form.loc && <span style={{ fontSize: 11.5, color: "#8a857a" }}>Couldn't detect your pincode automatically — please type it</span>}
+            : form.loc && (locInZone
+                ? <span style={{ fontSize: 11.5, color: "#177245", fontWeight: 700 }}>✓ Not needed — your map pin is inside our delivery area</span>
+                : <span style={{ fontSize: 11.5, color: "#8a857a" }}>Couldn't look up your pincode — please type it</span>)}
         </label>
 
         <div style={{ display: "grid", gap: 5 }}>
