@@ -157,7 +157,25 @@ const DEFAULT_CATS = [
   { id: "eggs", name: "Country Eggs" }, { id: "quail", name: "Quail & Kadaknath" },
   { id: "rtc", name: "Ready to Cook" }, { id: "combo", name: "Combos" },
 ];
-const STATUSES = ["Order received", "Cutting & cleaning", "Packed", "Out for delivery", "Delivered"];
+const STATUSES = ["Processing", "Out for delivery", "Delivered"];
+/* Orders placed before the three-step change carry the old wording, and a
+   phone with the old page cached can still send it. Everything reads the
+   status through here, so nothing is stranded. */
+const OLD_STATUS = {
+  "Order received": "Processing",
+  "Cutting & cleaning": "Processing",
+  "Cutting and cleaning": "Processing",
+  "Packed": "Processing",
+};
+const normStatus = (s) => {
+  const v = String(s == null ? "" : s).trim();
+  if (!v) return "Processing";
+  if (OLD_STATUS[v]) return OLD_STATUS[v];
+  if (v === "Cancelled" || STATUSES.indexOf(v) >= 0) return v;
+  return "Processing";
+};
+const normOrders = (list) => (Array.isArray(list) ? list : []).map((o) =>
+  (o && normStatus(o.status) !== o.status ? { ...o, status: normStatus(o.status) } : o));
 const rup = (n) => "₹" + Number(n).toLocaleString("en-IN");
 const dkey = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 
@@ -275,7 +293,7 @@ function AdminApp() {
       const c = await loadKey("huntandeat-core-v2", null);
       if (c) setCore(c);
     }
-    const o = await loadKey("huntandeat-orders", []);
+    const o = normOrders(await loadKey("huntandeat-orders", []));
     setOrders(o);
     setLastSync(new Date());
     if (silent && seenCount.current && o.length > seenCount.current) {
@@ -366,7 +384,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v7.2</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v7.3</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -869,7 +887,7 @@ function Orders({ orders, saveOrders }) {
                   const w = placedWhen(o.placedAt);
                   if (!w) return null;
                   return (
-                    <span title={"Order received " + w.when}
+                    <span title={"Order placed " + w.when}
                       style={{ fontSize: 11.5, fontWeight: 700, marginLeft: 8, borderRadius: 999, padding: "2px 10px",
                         background: w.fresh ? "#EAF6EE" : "#F4F0E6", color: w.fresh ? "#1D6B3F" : "#6b675e",
                         border: "1px solid " + (w.fresh ? "#BEDFC8" : "#E5DFD0") }}>
