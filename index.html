@@ -261,7 +261,25 @@ const BTHEME = {
   cream: { bg: "linear-gradient(118deg,#FFFDF6 0%,#F6EADB 55%,#EEDCBE 100%)", ink: "#3A2F22", sub: "#6d6252",               gold: "#8E6A1F", badge: "#A6212E", badgeInk: "#fff" },
 };
 
-const STATUSES = ["Order received", "Cutting & cleaning", "Packed", "Out for delivery", "Delivered"];
+const STATUSES = ["Processing", "Out for delivery", "Delivered"];
+/* Orders placed before the three-step change carry the old wording, and a
+   phone with the old page cached can still send it. Everything reads the
+   status through here, so nothing is stranded. */
+const OLD_STATUS = {
+  "Order received": "Processing",
+  "Cutting & cleaning": "Processing",
+  "Cutting and cleaning": "Processing",
+  "Packed": "Processing",
+};
+const normStatus = (s) => {
+  const v = String(s == null ? "" : s).trim();
+  if (!v) return "Processing";
+  if (OLD_STATUS[v]) return OLD_STATUS[v];
+  if (v === "Cancelled" || STATUSES.indexOf(v) >= 0) return v;
+  return "Processing";
+};
+const normOrders = (list) => (Array.isArray(list) ? list : []).map((o) =>
+  (o && normStatus(o.status) !== o.status ? { ...o, status: normStatus(o.status) } : o));
 
 const rup = (n) => "₹" + Number(n).toLocaleString("en-IN");
 const dkey = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
@@ -964,7 +982,7 @@ function App() {
         // database confirmed empty — true first run: publish defaults once
         saveKey("huntandeat-core-v2", { products: DEFAULT_PRODUCTS, slots: DEFAULT_SLOTS, settings: DEFAULT_SETTINGS, categories: CATEGORIES.slice(1) });
       }
-      const ord = await loadKey("huntandeat-orders", []);
+      const ord = normOrders(await loadKey("huntandeat-orders", []));
       setOrders(ord);
       try { setReviews(await loadKey("huntandeat-reviews", []) || []); } catch (e) {}
       setLoaded(true);
@@ -1005,7 +1023,7 @@ function App() {
   useEffect(() => {
     if (!loaded || !custPhone) return;
     const t = setInterval(async () => {
-      try { const r = await window.storage.get("huntandeat-orders", true); if (r) setOrders(JSON.parse(r.value)); } catch {}
+      try { const r = await window.storage.get("huntandeat-orders", true); if (r) setOrders(normOrders(JSON.parse(r.value))); } catch {}
     }, 30000);
     return () => clearInterval(t);
   }, [loaded, custPhone]);
@@ -1338,7 +1356,7 @@ function Shop({ products, categories, zones, slots, settings, orders, offers, cu
       {liveOrder && (
         <div onClick={() => setTrackOpen(true)} className="fadeup"
           style={{ background: "linear-gradient(90deg,#1D6B3F,#177245)", color: "#fff", padding: "11px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, justifyContent: "center", flexWrap: "wrap", fontSize: 13.5 }}>
-          <span style={{ fontSize: 17 }}>{["📋", "🔪", "📦", "🛵", "🏠"][STATUSES.indexOf(liveOrder.status)] || "📋"}</span>
+          <span style={{ fontSize: 17 }}>{["🔪", "🛵", "🏠"][STATUSES.indexOf(normStatus(liveOrder.status))] || "🔪"}</span>
           <b>Your order {liveOrder.id} — {liveOrder.status}</b>
           <span style={{ opacity: .9 }}>· {liveOrder.slotLabel}</span>
           <span style={{ background: "rgba(255,255,255,.2)", borderRadius: 999, padding: "3px 12px", fontWeight: 800, fontSize: 12 }}>Track ›</span>
@@ -1589,7 +1607,7 @@ function Shop({ products, categories, zones, slots, settings, orders, offers, cu
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v7.2</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v7.3</span>
         </div>
       </footer>
 
@@ -2222,7 +2240,7 @@ function Checkout({ cartItems, gifts, subtotal, delFee, total, slots, settings, 
       slotId: shipOnly ? "ship" : slotId,
       slotLabel: shipOnly ? ("📦 All-India courier · " + (settings.shipDays || "3 – 5 days")) : slot.label,
       mode: shipOnly ? "ship" : (isPreOrder ? "prebook" : "local"),
-      status: "Order received", placedAt: new Date().toISOString(),
+      status: "Processing", placedAt: new Date().toISOString(),
     });
     trackStep("order_placed");
     try {
@@ -2664,7 +2682,7 @@ function Track({ orders, settings, close, reviews, onRate }) {
   const refresh = async (query) => {
     setBusy(true);
     let data = live;
-    try { const r = await window.storage.get("huntandeat-orders", true); if (r) data = JSON.parse(r.value); setLive(data); } catch {}
+    try { const r = await window.storage.get("huntandeat-orders", true); if (r) data = normOrders(JSON.parse(r.value)); setLive(data); } catch {}
     setBusy(false);
     const s = (query != null ? query : q).trim();
     if (!s) return setList([]);
@@ -2733,7 +2751,7 @@ function Track({ orders, settings, close, reviews, onRate }) {
           </div>
           <div style={{ display: "grid", gap: 10 }}>
             {list.map((o) => {
-              const idx = STATUSES.indexOf(o.status);
+              const idx = STATUSES.indexOf(normStatus(o.status));
               const expanded = open === o.id;
               const cancelled = o.status === "Cancelled";
               return (
@@ -2751,7 +2769,7 @@ function Track({ orders, settings, close, reviews, onRate }) {
                         <span style={{ fontSize: 11, fontWeight: 800, borderRadius: 999, padding: "2px 9px",
                           background: cancelled ? "#FBE9E7" : done(o) ? "#EAF6EE" : "#FFF6E5",
                           color: cancelled ? BRAND.red : done(o) ? "#177245" : "#8E6A1F" }}>
-                          {o.status}
+                          {normStatus(o.status)}
                         </span>
                       </div>
                     </div>
@@ -2774,7 +2792,7 @@ function Track({ orders, settings, close, reviews, onRate }) {
                             <div key={s} style={{ display: "flex", gap: 10, alignItems: "center", padding: "5px 0" }}>
                               <span style={{ width: 22, height: 22, borderRadius: 999, background: on ? BRAND.green : "#e5dfd0", color: "#fff", display: "grid", placeItems: "center", fontSize: 12 }}>{on ? "✓" : ""}</span>
                               <span style={{ fontWeight: cur ? 800 : on ? 600 : 500, color: on ? BRAND.ink : "#a39e93", fontSize: 13.5 }}>
-                                {["📋", "🔪", "📦", "🛵", "🏠"][i]} {s}{cur ? " — now" : ""}
+                                {["🔪", "🛵", "🏠"][i]} {s}{cur ? " — now" : ""}
                               </span>
                             </div>
                           );
