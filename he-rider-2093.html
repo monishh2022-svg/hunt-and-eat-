@@ -111,11 +111,25 @@ function playTone(vol) {
   });
 }
 
+/* The shop moved from five steps to three. Orders placed before that change
+   still say "Order received" / "Cutting & cleaning" / "Packed"; all three mean
+   the same thing now, so they are read as Processing. */
+const OLD_STATUS = { "Order received": "Processing", "Cutting & cleaning": "Processing",
+  "Cutting and cleaning": "Processing", "Packed": "Processing" };
+const normStatus = (s) => {
+  const v = String(s == null ? "" : s).trim();
+  if (!v) return "Processing";
+  if (OLD_STATUS[v]) return OLD_STATUS[v];
+  if (v === "Cancelled" || v === "Processing" || v === "Out for delivery" || v === "Delivered") return v;
+  return "Processing";
+};
 async function loadOrders() {
   const r = await fetch(RTDB + "/huntandeat/huntandeat-orders.json");
   if (!r.ok) throw new Error("read failed");
   const v = await r.json();
-  return v ? JSON.parse(v) : [];
+  const list = v ? JSON.parse(v) : [];
+  return (Array.isArray(list) ? list : []).map((o) =>
+    (o && normStatus(o.status) !== o.status ? { ...o, status: normStatus(o.status) } : o));
 }
 async function saveOrders(list) {
   const r = await fetch(RTDB + "/huntandeat/huntandeat-orders.json", { method: "PUT", body: JSON.stringify(JSON.stringify(list)) });
