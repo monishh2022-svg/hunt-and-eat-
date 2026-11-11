@@ -384,7 +384,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v7.5</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v7.6</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -483,7 +483,7 @@ function AdminApp() {
         {tab === "offers" && <Offers offers={core?.offers || []} products={products} cats={categories}
           settings={settings} saveSettings={(s) => saveCore({ settings: s })}
           save={(o) => saveCore({ offers: o })} saveProducts={(p) => saveCore({ products: p })} />}
-        {tab === "slots" && <Slots slots={slots} save={(s) => saveCore({ slots: s })} />}
+        {tab === "slots" && <Slots slots={slots} cutoff={Number(settings.cutoffHours) || 0} save={(s) => saveCore({ slots: s })} />}
         {tab === "settings" && <Settings settings={settings} save={(s) => saveCore({ settings: s })} zones={core?.zones || []} saveZones={(z) => saveCore({ zones: z })} />}
       </main>
     </Shell>
@@ -3562,7 +3562,7 @@ const hourOf = (v) => {
   return n;
 };
 
-function Slots({ slots, save }) {
+function Slots({ slots, cutoff, save }) {
   const [adding, setAdding] = useState(false);
   const [nStart, setNStart] = useState(6);
   const [nEnd, setNEnd] = useState(10);
@@ -3592,14 +3592,83 @@ function Slots({ slots, save }) {
           </div>
         );
       })()}
+      {(() => {
+        /* The question this tab never answered: can anyone actually order for
+           today, right now? Overlapping windows get flagged here too. */
+        const now = new Date();
+        const nowH = now.getHours() + now.getMinutes() / 60;
+        const live = draft.filter((s) => s.active !== false && hourOf(s.start) !== null);
+        const openNow = live.filter((s) => nowH < hourOf(s.start) - (cutoff || 0))
+          .sort((a, b) => hourOf(a.start) - hourOf(b.start));
+        const shut = live.length - openNow.length;
+
+        // two slots covering the same hours are sold twice over
+        const clash = [];
+        const sorted = live.slice().sort((a, b) => hourOf(a.start) - hourOf(b.start));
+        for (let i = 1; i < sorted.length; i++) {
+          if (hourOf(sorted[i].start) === hourOf(sorted[i - 1].start)) {
+            clash.push(sorted[i - 1].label + "  +  " + sorted[i].label);
+          }
+        }
+
+        return (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ background: openNow.length ? "#EAF6EE" : "#FFF6E5",
+              border: "1.5px solid " + (openNow.length ? "#BFE0CB" : "#E8C77A"),
+              borderRadius: 11, padding: "12px 14px" }}>
+              <div style={{ fontWeight: 800, fontSize: 13.5, marginBottom: 5,
+                color: openNow.length ? "#17422B" : "#8E6A1F" }}>
+                {openNow.length
+                  ? "✅ Customers can still order for today"
+                  : "⚠️ Nobody can order for today any more"}
+              </div>
+              <div style={{ fontSize: 12.5, lineHeight: 1.6, color: "#5c584e" }}>
+                {openNow.length ? (
+                  <span>
+                    It is {hourName(Math.floor(nowH)).replace(":00", ":" + String(now.getMinutes()).padStart(2, "0"))}.
+                    Still open: <b>{openNow.map((s) => s.label).join(", ")}</b>
+                    {shut > 0 ? " — the other " + shut + " closed earlier today." : "."}
+                  </span>
+                ) : (
+                  <span>
+                    All {live.length} slots closed for today, so the shop is showing tomorrow instead.
+                    With a <b>{cutoff}-hour cut-off</b>, your last slot shut {" "}
+                    <b>{cutoff} hour{cutoff === 1 ? "" : "s"}</b> before it starts. To keep selling later in
+                    the day, lower the cut-off in <b>⚙️ Settings</b> or add a later slot.
+                  </span>
+                )}
+              </div>
+            </div>
+            {clash.length > 0 && (
+              <div style={{ marginTop: 8, background: "#FBE9E7", border: "1px solid #F0C0BA", borderRadius: 9,
+                padding: "9px 12px", fontSize: 12.5, color: "#8E2A20", lineHeight: 1.5 }}>
+                ⚠️ Two slots start at the same time: <b>{clash.join("; ")}</b>. Customers see both and
+                your capacity is split across them. Remove one unless you meant it.
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       <div style={{ display: "grid", gap: 8 }}>
-        {draft.map((s) => (
+        {draft.slice().sort((a, b) => {
+          const ha = hourOf(a.start), hb = hourOf(b.start);
+          if (ha == null && hb == null) return 0;
+          if (ha == null) return 1;
+          if (hb == null) return -1;
+          return ha - hb;
+        }).map((s) => (
           <div key={s.id} style={{ background: "#fff", borderRadius: 10, padding: "12px 14px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
             <b style={{ flex: 1, minWidth: 150 }}>
               🕐 {s.label}
               <span style={{ fontWeight: 500, fontSize: 11.5, color: "#8a857a", marginLeft: 8 }}>
                 {hourOf(s.start) !== null
-                  ? "cut-off counts back from " + hourName(hourOf(s.start))
+                  ? (() => {
+                      const close = hourOf(s.start) - (cutoff || 0);
+                      return cutoff > 0
+                        ? "same-day orders close at " + (close < 0 ? "midnight the night before" : hourName(close))
+                        : "takes same-day orders right up to " + hourName(hourOf(s.start));
+                    })()
                   : "⚠️ no start hour — cut-off cannot work"}
               </span>
             </b>
