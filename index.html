@@ -1607,7 +1607,7 @@ function Shop({ products, categories, zones, slots, settings, orders, offers, cu
         </div>
         <div className="script" style={{ background: BRAND.green, color: "#fff", textAlign: "center", padding: "11px 16px", fontSize: 23, letterSpacing: .3 }}>
           Goodness You Can Trust, Quality You Can Taste! 🌿
-          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v7.5</span>
+          <span style={{ fontSize: 10, opacity: .55, fontFamily: "inherit" }}> · v7.6</span>
         </div>
       </footer>
 
@@ -2407,7 +2407,14 @@ function Checkout({ cartItems, gifts, subtotal, delFee, total, slots, settings, 
         ))}
       </div>
       <div style={{ display: "grid", gap: 8, marginBottom: 18 }}>
-        {slots.map((s) => {
+        {/* earliest first — the stored order is whatever they were added in */}
+        {slots.slice().sort((a, b) => {
+          const ha = slotStart(a), hb = slotStart(b);
+          if (ha == null && hb == null) return 0;
+          if (ha == null) return 1;
+          if (hb == null) return -1;
+          return ha - hb;
+        }).map((s) => {
           const st = slotState(s);
           const sel = slotId === s.id;
           return (
