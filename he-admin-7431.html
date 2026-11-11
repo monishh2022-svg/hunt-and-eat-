@@ -374,7 +374,7 @@ function AdminApp() {
   const revenue = active.filter((o) => o.status === "Delivered").reduce((s, o) => s + o.total, 0);
   const todayRevenue = todays.reduce((s, o) => s + o.total, 0);
 
-  const tabs = [["dash", "📊 Dashboard"], ["orders", `📦 Orders${newOrders ? ` (+${newOrders} new)` : ""}`], ["menu", "🍗 Menu"], ["banners", "🖼️ Banners"], ["reviews", "⭐ Reviews"], ["customers", "👥 Customers"], ["visits", "📈 Visitors"], ["sessions", "🎥 Sessions"], ["demand", "📍 Demand map"], ["riders", "🛵 Riders"], ["cash", "💰 Cash"], ["offers", "🎁 Offers"], ["slots", "🕐 Slots"], ["settings", "⚙️ Settings"]];
+  const tabs = [["dash", "📊 Dashboard"], ["orders", `📦 Orders${newOrders ? ` (+${newOrders} new)` : ""}`], ["menu", "🍗 Menu"], ["banners", "🖼️ Banners"], ["reviews", "⭐ Reviews"], ["customers", "👥 Customers"], ["campaign", "📣 Campaign"], ["visits", "📈 Visitors"], ["sessions", "🎥 Sessions"], ["demand", "📍 Demand map"], ["riders", "🛵 Riders"], ["cash", "💰 Cash"], ["offers", "🎁 Offers"], ["slots", "🕐 Slots"], ["settings", "⚙️ Settings"]];
 
   return (
     <Shell>
@@ -384,7 +384,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v7.6</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v7.7</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -475,6 +475,7 @@ function AdminApp() {
         {tab === "banners" && <BannersTab settings={settings} cats={categories} products={products} save={(s) => saveCore({ settings: s })} />}
         {tab === "reviews" && <Reviews />}
         {tab === "customers" && <Customers orders={orders} />}
+        {tab === "campaign" && <Campaign orders={orders} settings={settings} />}
         {tab === "visits" && <Visitors orders={orders} />}
         {tab === "sessions" && <Sessions settings={settings} saveSettings={(s) => saveCore({ settings: s })} />}
         {tab === "demand" && <Demand zones={core?.zones || []} />}
@@ -2157,6 +2158,322 @@ function Riders({ settings }) {
         ))}
       </div>
     </>
+  );
+}
+
+
+/* =====================================================================
+   CAMPAIGN — message past customers on WhatsApp.
+
+   A web page cannot send WhatsApp messages on its own. What this does is
+   line the customers up, write each message, and open WhatsApp on the
+   right chat with the text already typed. One tap per customer in
+   WhatsApp, then back here for the next. Roughly ten seconds each.
+
+   Who has been messaged is kept in the database, not the browser, so the
+   count is right whichever device is used and nobody is messaged twice.
+===================================================================== */
+const CAMP_PRESETS = [
+  { label: "New stock today",
+    text: "Hi {name}, Hunt & Eat here 🐓\n\nToday's naattu kozhi is cut fresh and ready. Order before {cutoff} and we'll deliver to your door.\n\nhuntandeat.shop\n\nReply STOP if you'd rather not get these." },
+  { label: "Weekend special",
+    text: "Hi {name}, Hunt & Eat 🐓\n\nWeekend special — fresh mutton and naattu kozhi, cut only after you order, free home delivery in Kundrathur and Nandambakkam.\n\nOrder: huntandeat.shop\n\nReply STOP to opt out." },
+  { label: "We miss you",
+    text: "Hi {name}, this is Hunt & Eat 🐓\n\nIt's been a while since your last order. Anything we could do better — the cut, the timing, the price? Tell me, I read every reply.\n\nhuntandeat.shop\n\nReply STOP to opt out." },
+  { label: "Festival order",
+    text: "Hi {name}, Hunt & Eat 🐓\n\nTaking orders for the festival now. Pre-book your mutton and naattu kozhi so you're not left waiting on the day.\n\nhuntandeat.shop\n\nReply STOP to opt out." },
+];
+
+const daysSince = (iso) => {
+  if (!iso) return 9999;
+  const d = (Date.now() - new Date(iso).getTime()) / 86400000;
+  return isFinite(d) ? Math.floor(d) : 9999;
+};
+
+function Campaign({ orders, settings }) {
+  const [text, setText] = useState(CAMP_PRESETS[0].text);
+  const [seg, setSeg] = useState("all");
+  const [pin, setPin] = useState("all");
+  const [sent, setSent] = useState({});        // phone -> when, this campaign
+  const [optOut, setOptOut] = useState({});    // phone -> when, forever
+  const [ready, setReady] = useState(false);
+  const [cursor, setCursor] = useState(0);
+  const [running, setRunning] = useState(false);
+  const [note, setNote] = useState("");
+
+  const campKey = "huntandeat-campaign-live";
+  const optKey = "huntandeat-optout";
+
+  useEffect(() => {
+    (async () => {
+      const c = await loadKey(campKey, {});
+      const o = await loadKey(optKey, {});
+      setSent(c && c.sent ? c.sent : {});
+      if (c && c.text) setText(c.text);
+      setOptOut(o || {});
+      setReady(true);
+    })();
+  }, []);
+
+  // ---- who there is to talk to -------------------------------------------
+  const map = {};
+  (orders || []).filter((o) => o.status !== "Cancelled").forEach((o) => {
+    const k = (o.phone || "").replace(/\D/g, "").slice(-10);
+    if (!/^[6-9]\d{9}$/.test(k)) return;          // a real Indian mobile, or skip
+    if (!map[k]) map[k] = { phone: k, name: (o.name || "").trim(), n: 0, spend: 0, last: o.placedAt, pincode: o.pincode };
+    const c = map[k];
+    c.n++; c.spend += o.total || 0;
+    if ((o.placedAt || "") > (c.last || "")) { c.last = o.placedAt; c.name = (o.name || "").trim() || c.name; c.pincode = o.pincode || c.pincode; }
+  });
+  const people = Object.keys(map).map((k) => map[k]);
+  const spends = people.map((p) => p.spend).sort((a, b) => b - a);
+  const topCut = spends.length ? spends[Math.max(0, Math.floor(spends.length * 0.2) - 1)] : 0;
+
+  const SEGMENTS = [
+    { id: "all",     label: "Everyone who has ordered", test: () => true },
+    { id: "recent",  label: "Ordered in the last 30 days", test: (p) => daysSince(p.last) <= 30 },
+    { id: "lapsed",  label: "Nothing for 30+ days",        test: (p) => daysSince(p.last) > 30 },
+    { id: "once",    label: "Ordered only once",           test: (p) => p.n === 1 },
+    { id: "regular", label: "Regulars (2 or more orders)", test: (p) => p.n >= 2 },
+    { id: "top",     label: "Top 20% by spend",            test: (p) => p.spend >= topCut },
+  ];
+  const pins = [];
+  people.forEach((p) => { const k = (p.pincode || "").trim(); if (k && pins.indexOf(k) < 0) pins.push(k); });
+  pins.sort();
+
+  const segTest = (SEGMENTS.find((s) => s.id === seg) || SEGMENTS[0]).test;
+  const audience = people
+    .filter(segTest)
+    .filter((p) => pin === "all" || (p.pincode || "").trim() === pin)
+    .filter((p) => !optOut[p.phone])
+    .sort((a, b) => (a.last < b.last ? 1 : -1));
+
+  const queue = audience.filter((p) => !sent[p.phone]);
+  const doneCount = audience.length - queue.length;
+  const current = queue[Math.min(cursor, Math.max(0, queue.length - 1))];
+
+  // ---- the message --------------------------------------------------------
+  const nextSlotWord = (() => {
+    const s = (settings && settings.cutoffHours) || 0;
+    return s ? "the cut-off" : "tonight";
+  })();
+  const fill = (p) => String(text || "")
+    .replace(/\{name\}/g, (p && p.name) || "there")
+    .replace(/\{cutoff\}/g, nextSlotWord);
+
+  const persist = async (nextSent) => {
+    await saveKey(campKey, { text: text, sent: nextSent, at: Date.now() });
+  };
+
+  const markSent = async (p) => {
+    const n = { ...sent }; n[p.phone] = Date.now();
+    setSent(n); await persist(n);
+  };
+
+  const openChat = async (p) => {
+    window.open("https://wa.me/91" + p.phone + "?text=" + encodeURIComponent(fill(p)), "_blank");
+    await markSent(p);
+  };
+
+  const stopMessaging = async (p) => {
+    const n = { ...optOut }; n[p.phone] = Date.now();
+    setOptOut(n); await saveKey(optKey, n);
+    setNote(p.name || p.phone + "") ;
+    setTimeout(() => setNote(""), 2200);
+  };
+
+  const resetCampaign = async () => {
+    if (!window.confirm("Start a new campaign?\n\nThe record of who has already been messaged is cleared, so everyone in your chosen list can be messaged again. The do-not-message list is kept.")) return;
+    setSent({}); setCursor(0); setRunning(false);
+    await saveKey(campKey, { text: text, sent: {}, at: Date.now() });
+  };
+
+  const exportList = () => {
+    const rows = [["Name", "Phone", "Orders", "Spend", "Last order", "Pincode", "Messaged"]];
+    audience.forEach((p) => rows.push([p.name, p.phone, p.n, p.spend,
+      (p.last || "").slice(0, 10), p.pincode || "", sent[p.phone] ? "yes" : "no"]));
+    downloadCSV("hunt-and-eat-campaign.csv", rows);
+  };
+
+  const box = { background: "#fff", border: "1px solid #E5DFD0", borderRadius: 12, padding: 16, marginBottom: 14 };
+  const inpS = { padding: "8px 10px", borderRadius: 8, border: "1.5px solid #e5dfd0", fontSize: 13.5, fontFamily: "inherit", boxSizing: "border-box" };
+
+  if (!ready) return <div style={{ color: "#8a857a", fontSize: 13 }}>Loading your customers…</div>;
+
+  return (
+    <div>
+      <h2 style={{ margin: "0 0 3px", fontSize: 19 }}>📣 Message past customers</h2>
+      <div style={{ fontSize: 12.5, color: "#8a857a", marginBottom: 14 }}>
+        One tap per customer. WhatsApp opens with the message already typed — you press send there.
+      </div>
+
+      <div style={{ background: "#FFF6E5", border: "1.5px solid #E8C77A", borderRadius: 11, padding: "12px 14px", marginBottom: 14, fontSize: 12.5, lineHeight: 1.65, color: "#6b5520" }}>
+        <b>Read this before your first campaign.</b> WhatsApp bans numbers that send the same message
+        to many people who did not ask for it — and a banned number takes your customer history with it.
+        Keep it to people who have actually ordered from you, leave the <b>Reply STOP</b> line in,
+        send in batches of 20–30 rather than all at once, and never message the same person twice in a week.
+      </div>
+
+      {/* ---------------- who ---------------- */}
+      <div style={box}>
+        <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 9 }}>1 · Who gets it</div>
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 10 }}>
+          {SEGMENTS.map((s) => {
+            const n = people.filter(s.test).filter((p) => pin === "all" || (p.pincode || "").trim() === pin)
+              .filter((p) => !optOut[p.phone]).length;
+            const on = seg === s.id;
+            return (
+              <button key={s.id} onClick={() => { setSeg(s.id); setCursor(0); }}
+                style={{ border: "1.5px solid " + (on ? BRAND.green : "#E0D7C4"), background: on ? BRAND.green : "#fff",
+                  color: on ? "#fff" : "#5c584e", borderRadius: 999, padding: "7px 14px",
+                  fontWeight: 800, fontSize: 12.5, cursor: "pointer" }}>
+                {s.label} ({n})
+              </button>
+            );
+          })}
+        </div>
+        <label style={{ fontSize: 12.5, fontWeight: 700, color: "#5c584e", display: "inline-flex", gap: 8, alignItems: "center" }}>
+          Area
+          <select value={pin} onChange={(e) => { setPin(e.target.value); setCursor(0); }} style={{ ...inpS, width: "auto" }}>
+            <option value="all">Everywhere ({people.filter((p) => !optOut[p.phone]).length})</option>
+            {pins.map((k) => <option key={k} value={k}>{k}</option>)}
+          </select>
+        </label>
+        {Object.keys(optOut).length > 0 && (
+          <div style={{ fontSize: 11.5, color: "#8a857a", marginTop: 8 }}>
+            {Object.keys(optOut).length} customer{Object.keys(optOut).length === 1 ? " is" : "s are"} on your
+            do-not-message list and {Object.keys(optOut).length === 1 ? "is" : "are"} left out of every campaign.
+          </div>
+        )}
+      </div>
+
+      {/* ---------------- what ---------------- */}
+      <div style={box}>
+        <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 9 }}>2 · What it says</div>
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 9 }}>
+          {CAMP_PRESETS.map((pr) => (
+            <button key={pr.label} onClick={() => setText(pr.text)}
+              style={{ border: "1.5px solid #E0D7C4", background: "#fff", color: "#5c584e", borderRadius: 999,
+                padding: "6px 13px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+              {pr.label}
+            </button>
+          ))}
+        </div>
+        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={7}
+          style={{ ...inpS, width: "100%", resize: "vertical", lineHeight: 1.55 }} />
+        <div style={{ fontSize: 11.5, color: "#8a857a", marginTop: 6 }}>
+          {"{name}"} becomes the customer's name — someone with no name on file gets "there".
+        </div>
+        {current && (
+          <div style={{ marginTop: 10, background: "#EAF6EE", border: "1px solid #BFE0CB", borderRadius: 9, padding: "10px 12px" }}>
+            <div style={{ fontSize: 11.5, fontWeight: 800, color: "#17422B", marginBottom: 5 }}>
+              HOW IT WILL REACH {(current.name || "THEM").toUpperCase()}
+            </div>
+            <div style={{ fontSize: 13, whiteSpace: "pre-wrap", color: "#2c2a26", lineHeight: 1.5 }}>{fill(current)}</div>
+          </div>
+        )}
+        {!/STOP/i.test(text) && (
+          <div style={{ marginTop: 9, background: "#FBE9E7", border: "1px solid #F0C0BA", borderRadius: 9, padding: "9px 12px", fontSize: 12.5, color: "#8E2A20" }}>
+            ⚠️ No opt-out line. Add something like <b>"Reply STOP to opt out"</b> — it is what keeps your
+            number off WhatsApp's spam list, and people are far less likely to report you.
+          </div>
+        )}
+      </div>
+
+      {/* ---------------- send ---------------- */}
+      <div style={{ ...box, borderColor: "#C9A227", borderWidth: 1.5 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+          <div style={{ fontWeight: 800, fontSize: 14 }}>3 · Send</div>
+          <div style={{ fontSize: 12.5, color: "#5c584e" }}>
+            <b>{doneCount}</b> of <b>{audience.length}</b> done · <b>{queue.length}</b> to go
+          </div>
+        </div>
+
+        <div style={{ height: 8, background: "#F0EBE0", borderRadius: 99, overflow: "hidden", marginBottom: 12 }}>
+          <div style={{ height: "100%", width: (audience.length ? (doneCount / audience.length) * 100 : 0) + "%",
+            background: BRAND.ok, transition: "width .25s ease" }} />
+        </div>
+
+        {note && (
+          <div style={{ background: "#EAF6EE", border: "1px solid #BFE0CB", borderRadius: 8, padding: "7px 11px", fontSize: 12.5, fontWeight: 700, color: "#177245", marginBottom: 10 }}>
+            ✓ {note} will not be messaged again.
+          </div>
+        )}
+
+        {!queue.length ? (
+          <div style={{ textAlign: "center", padding: "18px 10px", color: "#8a857a", fontSize: 13.5, lineHeight: 1.6 }}>
+            {audience.length
+              ? <span>Everyone in this list has been messaged. 🎉<br />Pick another group above, or start a new campaign below.</span>
+              : <span>Nobody matches this group yet.</span>}
+          </div>
+        ) : (
+          <div>
+            <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap",
+              background: "#FCFAF4", border: "1px solid #E5DFD0", borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ flex: 1, minWidth: 180 }}>
+                <div style={{ fontWeight: 800, fontSize: 15 }}>{current.name || "No name on file"}</div>
+                <div style={{ fontSize: 12.5, color: "#8a857a", marginTop: 2 }}>
+                  {current.phone} · {current.n} order{current.n > 1 ? "s" : ""} · {rup(current.spend)} ·
+                  {" "}last {daysSince(current.last)} day{daysSince(current.last) === 1 ? "" : "s"} ago
+                  {current.pincode ? " · " + current.pincode : ""}
+                </div>
+              </div>
+              <button onClick={() => openChat(current)}
+                style={{ background: "#1FA855", color: "#fff", border: "none", borderRadius: 9, padding: "11px 20px", fontWeight: 800, fontSize: 14, cursor: "pointer" }}>
+                💬 Open WhatsApp
+              </button>
+              <button onClick={() => markSent(current)}
+                title="Leave them out of this campaign without messaging"
+                style={{ background: "#fff", border: "1.5px solid #E0D7C4", color: "#6b675e", borderRadius: 9, padding: "11px 14px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
+                Skip
+              </button>
+              <button onClick={() => stopMessaging(current)}
+                title="Never message this customer again"
+                style={{ background: "none", border: "none", color: BRAND.red, fontWeight: 800, fontSize: 12, cursor: "pointer", textDecoration: "underline" }}>
+                Never message
+              </button>
+            </div>
+
+            <div style={{ fontSize: 11.5, color: "#8a857a", marginTop: 9, lineHeight: 1.6 }}>
+              WhatsApp opens on their chat with the message typed — press send there, come back, and the
+              next customer is ready. Tapping <b>Open WhatsApp</b> counts them as done even if you decide
+              not to send, so skip rather than closing the tab.
+            </div>
+
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 800, color: "#8a857a", marginBottom: 6 }}>NEXT UP</div>
+              {queue.slice(1, 6).map((p) => (
+                <div key={p.phone} style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 12.5, padding: "4px 0", color: "#5c584e" }}>
+                  <span style={{ flex: 1, minWidth: 0 }}>{p.name || "No name"} · {p.phone}</span>
+                  <span style={{ color: "#8a857a" }}>{p.n} order{p.n > 1 ? "s" : ""}</span>
+                </div>
+              ))}
+              {queue.length > 6 && <div style={{ fontSize: 12, color: "#8a857a", marginTop: 4 }}>…and {queue.length - 6} more</div>}
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 9, marginTop: 14, flexWrap: "wrap", borderTop: "1px solid #F0EBE0", paddingTop: 12 }}>
+          <button onClick={exportList}
+            style={{ background: "#fff", border: "1.5px solid #E0D7C4", color: "#5c584e", borderRadius: 9, padding: "9px 14px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
+            ⬇️ Download this list (CSV)
+          </button>
+          <button onClick={resetCampaign}
+            style={{ background: "#fff", border: "1.5px solid #E0C3C0", color: BRAND.red, borderRadius: 9, padding: "9px 14px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
+            Start a new campaign
+          </button>
+        </div>
+      </div>
+
+      <div style={{ fontSize: 12, color: "#8a857a", lineHeight: 1.7 }}>
+        <b>If this gets too slow.</b> At a few hundred customers, one tap each stops being practical.
+        The paid route is the WhatsApp Business API through a provider such as AiSensy, Interakt or Wati —
+        real bulk sending, around 10–25 paise a message, but Meta must approve each message template first
+        and you may only message people who opted in. The free middle ground is a <b>Broadcast List</b> in
+        the WhatsApp Business app — but it only reaches people who have saved your number, which for most
+        shops is a small share of customers.
+      </div>
+    </div>
   );
 }
 
