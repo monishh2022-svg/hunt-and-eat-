@@ -384,7 +384,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v7.3</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v7.4</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -470,7 +470,7 @@ function AdminApp() {
             </div>
           </>
         )}
-        {tab === "orders" && <Orders orders={orders} saveOrders={saveOrders} />}
+        {tab === "orders" && <Orders orders={orders} saveOrders={saveOrders} slots={slots} />}
         {tab === "menu" && <Menu products={products} cats={categories} save={(p) => saveCore({ products: p })} saveCats={(c) => saveCore({ categories: c })} />}
         {tab === "banners" && <BannersTab settings={settings} cats={categories} products={products} save={(s) => saveCore({ settings: s })} />}
         {tab === "reviews" && <Reviews />}
@@ -708,8 +708,9 @@ function placedWhen(iso) {
   return { when: when, ago: ago, fresh: mins < 120 };
 }
 
-function Orders({ orders, saveOrders }) {
+function Orders({ orders, saveOrders, slots }) {
   const [filter, setFilter] = useState("pending");
+  const [slotPick, setSlotPick] = useState("all");
   const todayKeyInit = dkey(new Date());
   const [day, setDay] = useState(todayKeyInit);  // today's deliveries are what you need first
   const [sort, setSort] = useState("slot");
@@ -737,8 +738,26 @@ function Orders({ orders, saveOrders }) {
     : day === "custom" ? byStatus.filter(inRange)
     : byStatus.filter((o) => (o.slotDate || "—") === day);
 
+  /* Every slot worth showing: the ones set up in the Slots tab, plus any
+     label still attached to an order (a slot you removed since, say). Counts
+     come from the dates currently showing, so they match what is on screen. */
+  const slotCounts = {};
+  let noSlot = 0;
+  filtered.forEach((o) => {
+    const l = (o.slotLabel || "").trim();
+    if (l) slotCounts[l] = (slotCounts[l] || 0) + 1; else noSlot++;
+  });
+  const slotList = [];
+  (slots || []).forEach((s) => { const l = (s.label || "").trim(); if (l && slotList.indexOf(l) < 0) slotList.push(l); });
+  Object.keys(slotCounts).forEach((l) => { if (slotList.indexOf(l) < 0) slotList.push(l); });
+  slotList.sort((a, b) => slotHour(a) - slotHour(b));
+
+  const bySlot = slotPick === "all" ? filtered
+    : slotPick === "none" ? filtered.filter((o) => !(o.slotLabel || "").trim())
+    : filtered.filter((o) => (o.slotLabel || "").trim() === slotPick);
+
   const nameOf = (o) => (o.name || "").trim().toLowerCase();
-  const list = filtered.slice().sort((a, b) => {
+  const list = bySlot.slice().sort((a, b) => {
     if (sort === "az") return nameOf(a) < nameOf(b) ? -1 : nameOf(a) > nameOf(b) ? 1 : 0;
     if (sort === "za") return nameOf(a) > nameOf(b) ? -1 : nameOf(a) < nameOf(b) ? 1 : 0;
     if (sort === "new") return (b.placedAt || "") < (a.placedAt || "") ? -1 : 1;
@@ -821,7 +840,51 @@ function Orders({ orders, saveOrders }) {
         </span>
       </div>
 
-      {day !== "custom" && day !== "all" && (
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: 11.5, color: "#8a857a", fontWeight: 700, marginRight: 2 }}>SLOT</span>
+        <button onClick={() => setSlotPick("all")}
+          style={{ background: slotPick === "all" ? "#241E1A" : "#fff", color: slotPick === "all" ? "#fff" : BRAND.ink,
+            border: "1px solid " + (slotPick === "all" ? "#241E1A" : "#e5dfd0"), borderRadius: 999,
+            padding: "6px 14px", fontSize: 12.5, fontWeight: 800, cursor: "pointer" }}>
+          All slots ({filtered.length})
+        </button>
+        {slotList.map((l) => {
+          const n = slotCounts[l] || 0;
+          const on = slotPick === l;
+          return (
+            <button key={l} onClick={() => setSlotPick(on ? "all" : l)}
+              title={n === 0 ? "Nothing to pack for this slot" : n + " order" + (n > 1 ? "s" : "") + " in this slot"}
+              style={{ background: on ? "#241E1A" : "#fff", color: on ? "#fff" : (n ? BRAND.ink : "#a39e93"),
+                border: "1px solid " + (on ? "#241E1A" : n ? "#e5dfd0" : "#efe9dc"), borderRadius: 999,
+                padding: "6px 14px", fontSize: 12.5, fontWeight: n ? 700 : 500, cursor: "pointer" }}>
+              🕐 {l} ({n})
+            </button>
+          );
+        })}
+        {noSlot > 0 && (
+          <button onClick={() => setSlotPick(slotPick === "none" ? "all" : "none")}
+            title="Orders with no delivery slot — all-India parcels"
+            style={{ background: slotPick === "none" ? "#241E1A" : "#fff", color: slotPick === "none" ? "#fff" : BRAND.ink,
+              border: "1px solid " + (slotPick === "none" ? "#241E1A" : "#e5dfd0"), borderRadius: 999,
+              padding: "6px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+            📦 No slot ({noSlot})
+          </button>
+        )}
+      </div>
+
+      {slotPick !== "all" && (
+        <div style={{ fontSize: 12, color: "#17422B", background: "#EAF6EE", border: "1px solid #BFE0CB",
+          borderRadius: 8, padding: "7px 11px", marginBottom: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <b>{slotPick === "none" ? "Orders with no slot" : slotPick}</b> only — {list.length} order{list.length === 1 ? "" : "s"}.
+          Printing and bulk changes apply to these.
+          <button onClick={() => setSlotPick("all")}
+            style={{ background: "none", border: "none", color: BRAND.green, fontSize: 11.5, fontWeight: 800, textDecoration: "underline", cursor: "pointer" }}>
+            show every slot
+          </button>
+        </div>
+      )}
+
+      {slotPick === "all" && day !== "custom" && day !== "all" && (
         <div style={{ fontSize: 12, color: "#8a857a", marginBottom: 12 }}>
           {(dayCounts[todayKey] || 0) === 0
             ? "No deliveries scheduled for today — tap All days or Pick dates to see the rest."
