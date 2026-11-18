@@ -152,11 +152,174 @@ const BRAND = {
   bg: "#F4F0E6", ink: "#241E1A", danger: "#8E1B25", ok: "#177245",
 };
 
+const XLSX_SRC = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+
+/* ================= Stock, yield and day-book maths =================
+   The one thing no billing package models for a meat shop: a conversion
+   that LOSES weight. You buy 1.1 kg of live bird and sell 900 g dressed;
+   you buy 500 g of prawns and hand over 340 g cleaned. So a sale item
+   carries `useKg` — the raw kilos it actually eats — and the gap between
+   that and what the customer receives is the yield loss, priced in.
+
+   Nothing here decrements a stored stock number. Two tabs open at once
+   would race and lose a decrement, and silently wrong stock is worse than
+   none. Instead stock is DERIVED: last physical count, plus purchases
+   since, minus what the sales consumed. The count is the truth; the
+   difference between derived and counted is the wastage, which for a
+   perishable business is the number that actually decides profit. */
+const EMPTY_STOCK = { materials: [], purchases: [], counts: [], expenses: [] };
+
+const nk = (v) => { const n = Number(v); return isFinite(n) ? n : 0; };
+const kg = (n) => (Math.round(nk(n) * 1000) / 1000);
+
+/* The buying rate to value a sale at: that day's purchase if there was one,
+   otherwise the most recent before it. A shop buying fresh every morning
+   pays today's rate, not some drifting all-time average. */
+function rateOn(purchases, matId, date) {
+  const mine = (purchases || []).filter((p) => p.matId === matId && p.date && p.date <= date)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (!mine.length) return null;
+  const last = mine[mine.length - 1].date;
+  const sameDay = mine.filter((p) => p.date === last);
+  const q = sameDay.reduce((a, p) => a + nk(p.qty), 0);
+  const amt = sameDay.reduce((a, p) => a + nk(p.amount), 0);
+  return q > 0 ? amt / q : null;
+}
+
+function matCost(stock, matId, date) {
+  const r = rateOn(stock.purchases, matId, date);
+  if (r != null) return r;
+  const m = (stock.materials || []).find((x) => x.id === matId);
+  return m ? nk(m.cost) : 0;
+}
+
+/* Raw kilos one order consumes, per material. Free gifts consume stock too —
+   that is the whole point of costing them. */
+function orderUsage(o, products) {
+  const out = {};
+  (o.items || []).forEach((it) => {
+    const p = products.find((x) => x.name === it.name || x.id === it.pid);
+    if (!p || !p.matId || !nk(p.useKg)) return;
+    out[p.matId] = kg((out[p.matId] || 0) + nk(p.useKg) * nk(it.qty));
+  });
+  return out;
+}
+
+function usageBetween(orders, products, from, to) {
+  const out = {};
+  (orders || []).forEach((o) => {
+    if (normStatus(o.status) !== "Delivered") return;
+    const d = o.slotDate || (o.placedAt || "").slice(0, 10);
+    if (!d || d < from || d > to) return;
+    const u = orderUsage(o, products);
+    Object.keys(u).forEach((k) => { out[k] = kg((out[k] || 0) + u[k]); });
+  });
+  return out;
+}
+
+/* Derived stock for one material as of a date: start from the last physical
+   count on or before it, then add purchases and subtract sales after it. */
+function matOnHand(stock, orders, products, matId, asOf) {
+  const counts = (stock.counts || []).filter((c) => c.matId === matId && c.date <= asOf)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const base = counts.length ? counts[counts.length - 1] : null;
+  const since = base ? base.date : "0000-00-00";
+  const bought = (stock.purchases || [])
+    .filter((p) => p.matId === matId && p.date > since && p.date <= asOf)
+    .reduce((a, p) => a + nk(p.qty), 0);
+  const used = usageBetween(orders, products, since === "0000-00-00" ? since : nextDay(since), asOf)[matId] || 0;
+  return {
+    onHand: kg((base ? nk(base.actual) : 0) + bought - used),
+    countedOn: base ? base.date : null,
+    boughtSince: kg(bought), usedSince: kg(used),
+  };
+}
+
+function nextDay(d) {
+  const x = new Date(d + "T00:00:00Z");
+  x.setUTCDate(x.getUTCDate() + 1);
+  return x.toISOString().slice(0, 10);
+}
+
+/* A physical count closes the day: whatever is missing between what the
+   books expect and what is actually on the table was wasted. */
+function wastageOn(stock, orders, products, date) {
+  const rows = [];
+  (stock.counts || []).filter((c) => c.date === date).forEach((c) => {
+    const prev = (stock.counts || []).filter((x) => x.matId === c.matId && x.date < date)
+      .sort((a, b) => a.date.localeCompare(b.date)).pop();
+    const since = prev ? nextDay(prev.date) : date;
+    const bought = (stock.purchases || [])
+      .filter((p) => p.matId === c.matId && p.date >= since && p.date <= date)
+      .reduce((a, p) => a + nk(p.qty), 0);
+    const used = usageBetween(orders, products, since, date)[c.matId] || 0;
+    const expected = kg((prev ? nk(prev.actual) : 0) + bought - used);
+    const lost = kg(expected - nk(c.actual));
+    rows.push({ matId: c.matId, expected, actual: kg(c.actual), lost, value: lost * matCost(stock, c.matId, date) });
+  });
+  return rows;
+}
+
+/* The day's real profit — what a sales report alone will never tell you. */
+function dayBook(stock, orders, products, from, to) {
+  const sold = (orders || []).filter((o) => {
+    if (normStatus(o.status) !== "Delivered") return false;
+    const d = o.slotDate || (o.placedAt || "").slice(0, 10);
+    return d && d >= from && d <= to;
+  });
+  const revenue = sold.reduce((a, o) => a + nk(o.total), 0);
+  const goods = sold.reduce((a, o) => a + nk(o.subtotal), 0);
+  const delivery = sold.reduce((a, o) => a + nk(o.delFee), 0);
+  let cogs = 0;
+  sold.forEach((o) => {
+    const d = o.slotDate || (o.placedAt || "").slice(0, 10);
+    const u = orderUsage(o, products);
+    Object.keys(u).forEach((m) => { cogs += u[m] * matCost(stock, m, d); });
+  });
+  let waste = 0;
+  const seen = new Set((stock.counts || []).map((c) => c.date).filter((d) => d >= from && d <= to));
+  seen.forEach((d) => wastageOn(stock, orders, products, d).forEach((r) => { if (r.lost > 0) waste += r.value; }));
+  const expenses = (stock.expenses || []).filter((e) => e.date >= from && e.date <= to)
+    .reduce((a, e) => a + nk(e.amount), 0);
+  const counter = sold.filter((o) => o.src === "counter");
+  return {
+    bills: sold.length, counterBills: counter.length, revenue, goods, delivery,
+    cogs, waste, expenses, net: revenue - cogs - waste - expenses,
+    unmapped: sold.filter((o) => !Object.keys(orderUsage(o, products)).length).length,
+  };
+}
+
 const DEFAULT_CATS = [
   { id: "chicken", name: "Country Chicken" }, { id: "cuts", name: "Cuts & Boneless" },
   { id: "eggs", name: "Country Eggs" }, { id: "quail", name: "Quail & Kadaknath" },
   { id: "rtc", name: "Ready to Cook" }, { id: "combo", name: "Combos" },
 ];
+
+/* ---- Fish & seafood starter range ----
+   Ordered by what actually moves in Chennai. Prices are benchmarked to Kasimedu
+   harbour rates (Oct–Nov 2026) plus a cleaning-and-delivery margin — they are a
+   starting point, not a quote. Fish rates move daily; set yours before going live. */
+const FISH_CAT = { id: "fish", name: "Fish & Seafood", ta: "மீன் & கடல் உணவு", icon: "🐟" };
+const FISH_SEED = [
+  { sub: "Fry Meen", name: "Sankara / Red Snapper — Cleaned & Cut 500g", pcs: "2 – 3 Pcs", gross: "500 Gms", net: "370 – 410 Gms", mrp: 270, price: 240, emoji: "🐟", note: "Chennai's No.1 fry fish — highest repeat rate", desc: "Chennai's favourite fry fish. Scaled, gutted and cut to tawa size — crisp outside, soft inside. Net weight is what you get after cleaning." },
+  { sub: "Fry Meen", name: "Ayala / Indian Mackerel — Cleaned 500g", pcs: "3 – 4 Pcs", gross: "500 Gms", net: "380 – 420 Gms", mrp: 195, price: 170, emoji: "🐠", note: "Daily volume seller, low ticket", desc: "Everyday mackerel, gutted and scored for frying. Oily and full-flavoured — holds up to a thick masala." },
+  { sub: "Fry Meen", name: "Mathi / Sardine — Cleaned 500g", pcs: "8 – 12 Pcs", gross: "500 Gms", net: "360 – 400 Gms", mrp: 160, price: 140, emoji: "🐟", note: "Cheapest entry price — pulls first-time buyers", desc: "The cheapest fresh fry fish on the counter. Gutted, heads trimmed. Best cooked the same day." },
+  { sub: "Fry Meen", name: "Nethili / Anchovy — Cleaned 500g", pcs: "—", gross: "500 Gms", net: "300 – 350 Gms", mrp: 210, price: 185, emoji: "🐟", note: "Cleaning is slow — price the labour in", desc: "Small anchovies, heads and innards removed, ready for a crisp rava fry or spicy varuval." },
+  { sub: "Fry Meen", name: "Vaaval / Pomfret — Whole Cleaned 500g", pcs: "1 – 2 Pcs", gross: "500 Gms", net: "380 – 420 Gms", mrp: 380, price: 340, emoji: "🐟", note: "Premium fry fish — weekend and guest orders", desc: "Premium white pomfret, scaled and gutted whole with the sides scored. Mild, soft, barely any bone to fight." },
+  { sub: "Kuzhambu Meen", name: "Vanjaram / Seer Fish — Slice Cut 500g", pcs: "3 – 4 Slices", gross: "500 Gms", net: "470 – 500 Gms", mrp: 690, price: 620, emoji: "🐟", note: "Your hero item — highest bill value, Sunday demand", desc: "The king of the counter. Thick steak slices with almost no wastage — for Sunday kuzhambu and tawa fry." },
+  { sub: "Kuzhambu Meen", name: "Paarai / Trevally — Cut 500g", pcs: "2 – 4 Pcs", gross: "500 Gms", net: "400 – 440 Gms", mrp: 375, price: 335, emoji: "🐟", note: "Steady mid-price seller", desc: "Firm-fleshed trevally that keeps its shape in gravy. Scaled and cut into kuzhambu pieces." },
+  { sub: "Kuzhambu Meen", name: "Seela / Barracuda — Slice Cut 500g", pcs: "3 – 4 Slices", gross: "500 Gms", net: "450 – 490 Gms", mrp: 370, price: 330, emoji: "🐟", note: "Good margin, easy to cut", desc: "Lean, meaty slices with a single centre bone. Takes pepper and tamarind beautifully." },
+  { sub: "Kuzhambu Meen", name: "Sura / Shark — Boneless Cubes 500g", pcs: "—", gross: "500 Gms", net: "480 – 500 Gms", mrp: 440, price: 395, emoji: "🦈", note: "Sura puttu demand — loyal niche buyers", desc: "Skinned and cubed, no bones at all — the cut for sura puttu and sura kuzhambu." },
+  { sub: "Kuzhambu Meen", name: "Koduva / Sea Bass — Slice Cut 500g", pcs: "2 – 3 Slices", gross: "500 Gms", net: "450 – 490 Gms", mrp: 450, price: 400, emoji: "🐟", note: "Sells to families with kids and elders", desc: "Soft, sweet white flesh with very few bones. The safe choice for children and elders." },
+  { sub: "Kuzhambu Meen", name: "Thirukkai / Stingray — Cut 500g", pcs: "—", gross: "500 Gms", net: "450 – 490 Gms", mrp: 220, price: 195, emoji: "🐟", note: "Older customers ask for it by name", desc: "Boneless cartilage cuts — cheap, filling, and the only fish for a proper thirukkai kuzhambu." },
+  { sub: "Prawns & Crab", name: "Eral / Prawns — Medium, Deveined 500g", pcs: "—", gross: "500 Gms", net: "320 – 360 Gms", mrp: 200, price: 180, emoji: "🦐", note: "High demand — but biggest cleaning loss, watch margin", desc: "Shell-on medium prawns, heads removed and deveined. Net weight is after cleaning — shells and heads are heavy." },
+  { sub: "Prawns & Crab", name: "Eral / Tiger Prawns — Large, Deveined 500g", pcs: "12 – 16 Pcs", gross: "500 Gms", net: "330 – 370 Gms", mrp: 450, price: 400, emoji: "🦐", note: "Premium — pairs well with your mutton buyers", desc: "Big tiger prawns for roast and thokku. Heads removed, shell left on, deveined." },
+  { sub: "Prawns & Crab", name: "Nandu / Crab — Cleaned & Cut 500g", pcs: "2 – 3 Crabs", gross: "500 Gms", net: "—", mrp: 540, price: 490, emoji: "🦀", note: "Must be sold live-weight — say so or expect disputes", desc: "Sea crab, top shell opened and cut into halves. Weighed live, before cleaning — that is how crab is always sold." },
+  { sub: "Prawns & Crab", name: "Kanava / Squid — Rings & Tentacles 500g", pcs: "—", gross: "500 Gms", net: "330 – 370 Gms", mrp: 300, price: 270, emoji: "🦑", note: "Younger buyers, good repeat", desc: "Skinned and sliced into rings, ink sac and quill removed. Ready for a quick pepper fry." },
+  { sub: "Freshwater", name: "Kendai / Katla — Cut 500g", pcs: "3 – 5 Pcs", gross: "500 Gms", net: "400 – 440 Gms", mrp: 160, price: 140, emoji: "🐟", note: "Cheapest on the menu — inland supply, no harbour trip", desc: "Pond-reared katla, scaled and cut. The cheapest way to put fish curry on the table for a family." },
+  { sub: "Freshwater", name: "Kelluthi / Catfish — Cut 500g", pcs: "2 – 4 Pcs", gross: "500 Gms", net: "430 – 470 Gms", mrp: 175, price: 155, emoji: "🐟", note: "Local pond supply — stays fresh longer", desc: "Skinned catfish pieces — no scales, very few bones, rich and oily in a curry." },
+];
+
 const STATUSES = ["Processing", "Out for delivery", "Delivered"];
 /* Orders placed before the three-step change carry the old wording, and a
    phone with the old page cached can still send it. Everything reads the
@@ -287,6 +450,7 @@ function AdminApp() {
     try { localStorage.setItem("alert-sound", sound ? "on" : "off"); localStorage.setItem("alert-tone", tone);
       localStorage.setItem("alert-vol", String(vol)); localStorage.setItem("alert-repeat", String(repeatSec)); } catch {} }, [sound, tone, vol, repeatSec]);
   const [newOrders, setNewOrders] = useState(0);
+  const [stock, setStock] = useState(EMPTY_STOCK);
 
   const refresh = async (silent) => {
     if (!silent) {
@@ -295,6 +459,7 @@ function AdminApp() {
     }
     const o = normOrders(await loadKey("huntandeat-orders", []));
     setOrders(o);
+    setStock(await loadKey("huntandeat-stock", EMPTY_STOCK));
     setLastSync(new Date());
     if (silent && seenCount.current && o.length > seenCount.current) {
       const n = o.length - seenCount.current;
@@ -340,6 +505,31 @@ function AdminApp() {
     await saveKey("huntandeat-orders", next);
     seenCount.current = next.length;
   };
+  /* Re-reads before writing, like saveCore, so a purchase entered on the
+     phone isn't wiped by a count entered on the laptop a second later. */
+  const saveStock = async (patch) => {
+    setSaving(true);
+    let latest = null;
+    try { latest = await loadKey("huntandeat-stock", null); } catch {}
+    const next = { ...EMPTY_STOCK, ...(latest || stock || {}), ...patch };
+    setStock(next);
+    const ok = await saveKey("huntandeat-stock", next);
+    setSaving(false);
+    if (!ok) alert("⚠️ That did NOT reach the database. Your entry is not saved — please try again.");
+    return ok;
+  };
+  /* A counter sale is just an order with src:"counter", already Delivered.
+     That way it flows into Cash, the day book and the myBillBook exports
+     without a single line of special-casing anywhere else. */
+  const addCounterSale = async (sale) => {
+    const latest = normOrders(await loadKey("huntandeat-orders", []));
+    const next = [sale, ...latest];
+    setOrders(next);
+    const ok = await saveKey("huntandeat-orders", next);
+    seenCount.current = next.length;
+    if (!ok) alert("⚠️ The bill did NOT save to the database. Do not hand over the goods until it does.");
+    return ok;
+  };
 
   const settings = core?.settings || { adminPin: "1234" };
   const products = core?.products || [];
@@ -374,7 +564,7 @@ function AdminApp() {
   const revenue = active.filter((o) => o.status === "Delivered").reduce((s, o) => s + o.total, 0);
   const todayRevenue = todays.reduce((s, o) => s + o.total, 0);
 
-  const tabs = [["dash", "📊 Dashboard"], ["orders", `📦 Orders${newOrders ? ` (+${newOrders} new)` : ""}`], ["menu", "🍗 Menu"], ["banners", "🖼️ Banners"], ["reviews", "⭐ Reviews"], ["customers", "👥 Customers"], ["campaign", "📣 Campaign"], ["visits", "📈 Visitors"], ["sessions", "🎥 Sessions"], ["demand", "📍 Demand map"], ["riders", "🛵 Riders"], ["cash", "💰 Cash"], ["offers", "🎁 Offers"], ["slots", "🕐 Slots"], ["settings", "⚙️ Settings"]];
+  const tabs = [["dash", "📊 Dashboard"], ["orders", `📦 Orders${newOrders ? ` (+${newOrders} new)` : ""}`], ["counter", "🛒 Counter"], ["menu", "🍗 Menu"], ["stock", "⚖️ Stock"], ["daybook", "📒 Day book"], ["banners", "🖼️ Banners"], ["reviews", "⭐ Reviews"], ["customers", "👥 Customers"], ["campaign", "📣 Campaign"], ["billing", "🧾 Billing"], ["visits", "📈 Visitors"], ["sessions", "🎥 Sessions"], ["demand", "📍 Demand map"], ["riders", "🛵 Riders"], ["cash", "💰 Cash"], ["offers", "🎁 Offers"], ["slots", "🕐 Slots"], ["settings", "⚙️ Settings"]];
 
   return (
     <Shell>
@@ -384,7 +574,7 @@ function AdminApp() {
           <span className="display" style={{ fontWeight: 800, fontSize: 17 }}>Hunt & Eat — Admin Dashboard</span>
         </div>
         <div style={{ fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v7.7</span>
+          <span style={{ opacity: 0.8 }}>{saving ? "Saving…" : lastSync ? `Synced ${lastSync.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"} · v8.1</span>
           <button onClick={() => { audioCtx(); setSound(!sound); if (!sound) playTone(toneRef.current, 0.3); }}
             title={sound ? "Sound on" : "Sound off"}
             style={{ background: sound ? BRAND.cream : "transparent", color: sound ? BRAND.redDark : "#bbb", border: "1px solid " + (sound ? BRAND.cream : "#666"), borderRadius: 8, padding: "6px 11px", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -470,12 +660,21 @@ function AdminApp() {
             </div>
           </>
         )}
-        {tab === "orders" && <Orders orders={orders} saveOrders={saveOrders} slots={slots} />}
-        {tab === "menu" && <Menu products={products} cats={categories} save={(p) => saveCore({ products: p })} saveCats={(c) => saveCore({ categories: c })} />}
+        {tab === "orders" && <Orders orders={orders} saveOrders={saveOrders} slots={slots} settings={settings} />}
+        {tab === "menu" && <Menu products={products} cats={categories}
+          save={(p) => saveCore({ products: p })} saveCats={(c) => saveCore({ categories: c })}
+          /* adding a whole range needs the new category and its items published
+             together — two separate saves can each re-read the database first and
+             clobber one another, leaving items in a category that isn't there */
+          saveBoth={(p, c) => saveCore({ products: p, categories: c })} />}
         {tab === "banners" && <BannersTab settings={settings} cats={categories} products={products} save={(s) => saveCore({ settings: s })} />}
         {tab === "reviews" && <Reviews />}
         {tab === "customers" && <Customers orders={orders} />}
         {tab === "campaign" && <Campaign orders={orders} settings={settings} />}
+        {tab === "billing" && <Billing orders={orders} products={products} settings={settings} />}
+        {tab === "counter" && <Counter products={products} cats={categories} settings={settings} addCounterSale={addCounterSale} stock={stock} />}
+        {tab === "stock" && <StockTab stock={stock} saveStock={saveStock} orders={orders} products={products} saveCore={saveCore} />}
+        {tab === "daybook" && <DayBook stock={stock} saveStock={saveStock} orders={orders} products={products} />}
         {tab === "visits" && <Visitors orders={orders} />}
         {tab === "sessions" && <Sessions settings={settings} saveSettings={(s) => saveCore({ settings: s })} />}
         {tab === "demand" && <Demand zones={core?.zones || []} />}
@@ -522,6 +721,104 @@ function Modal({ close, children }) {
       </div>
     </div>
   );
+}
+
+/* ---------------- Customer bill ----------------
+   Deliberately headed "BILL", not "Tax Invoice". myBillBook owns the invoice
+   series, and a second numbered series issued from the website is exactly the
+   kind of thing that goes wrong at filing time. This carries the order number
+   instead, so the two can never collide. */
+function billLines(o) {
+  const paid = (o.items || []).filter((i) => !i.free);
+  const free = (o.items || []).filter((i) => i.free);
+  return { paid, free };
+}
+
+function billHTML(o, s) {
+  const { paid, free } = billLines(o);
+  const esc = (v) => String(v == null ? "" : v).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  const money = (n) => "₹" + Number(n || 0).toLocaleString("en-IN");
+  const row = (i) => `<tr><td>${esc(i.name)}${i.free ? ' <span class="f">FREE</span>' : ""}</td>
+    <td class="r">${i.qty}</td><td class="r">${i.free ? "—" : money(i.price)}</td>
+    <td class="r">${i.free ? "0" : money(Number(i.price) * Number(i.qty))}</td></tr>`;
+  const when = o.slotDate ? o.slotDate : (o.placedAt || "").slice(0, 10);
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Bill ${esc(o.id)}</title><style>
+    *{box-sizing:border-box}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:560px;margin:0 auto;padding:22px;color:#241E1A}
+    .hd{text-align:center;border-bottom:2px solid #A6212E;padding-bottom:12px;margin-bottom:14px}
+    .nm{font-size:25px;font-weight:800;color:#A6212E;letter-spacing:.5px}
+    .tag{font-size:12px;color:#6b675e;margin-top:3px}
+    .meta{display:flex;justify-content:space-between;font-size:13px;margin-bottom:12px;gap:16px;flex-wrap:wrap}
+    .meta b{display:block;font-size:11px;color:#8a857a;text-transform:uppercase;letter-spacing:.4px;font-weight:700}
+    table{width:100%;border-collapse:collapse;font-size:13.5px}
+    th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:#8a857a;border-bottom:1px solid #e5dfd0;padding:7px 4px}
+    td{padding:7px 4px;border-bottom:1px solid #f2ede2;vertical-align:top}
+    .r{text-align:right;white-space:nowrap}
+    .f{background:#177245;color:#fff;font-size:9.5px;font-weight:800;padding:1px 5px;border-radius:4px;vertical-align:middle}
+    .tot td{border:none;padding:4px}
+    .grand td{font-size:17px;font-weight:800;border-top:2px solid #241E1A;padding-top:9px}
+    .pay{margin-top:13px;background:#FBF3E4;border-radius:9px;padding:10px 13px;font-size:13px;font-weight:700}
+    .ft{margin-top:18px;text-align:center;font-size:11.5px;color:#8a857a;line-height:1.7}
+    @media print{body{padding:0}.noprint{display:none}}
+  </style></head><body>
+    <div class="hd">
+      <div class="nm">HUNT &amp; EAT</div>
+      <div class="tag">The Fresh and Original · Live cut after you order</div>
+      ${s.shopAddr ? `<div class="tag">${esc(s.shopAddr)}</div>` : ""}
+      <div class="tag">${esc(s.phone || "")}${s.fssai ? " · FSSAI " + esc(s.fssai) : ""}${s.gstin ? " · GSTIN " + esc(s.gstin) : ""}</div>
+    </div>
+    <div class="meta">
+      <div><b>Bill no</b>${esc(o.id)}</div>
+      <div><b>Date</b>${esc(when)}</div>
+      <div><b>Billed to</b>${esc(o.name || "Customer")}<br>${esc(o.phone || "")}</div>
+    </div>
+    ${o.address ? `<div style="font-size:12.5px;color:#6b675e;margin-bottom:12px">${esc(o.address)}${o.pincode ? ", " + esc(o.pincode) : ""}</div>` : ""}
+    <table>
+      <tr><th>Item</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">Amount</th></tr>
+      ${paid.map(row).join("")}${free.map(row).join("")}
+    </table>
+    <table class="tot" style="margin-top:10px">
+      <tr><td>Item total</td><td class="r">${money(o.subtotal)}</td></tr>
+      <tr><td>Delivery</td><td class="r">${Number(o.delFee) ? money(o.delFee) : "FREE"}</td></tr>
+      ${free.length ? `<tr><td style="color:#177245;font-weight:700">Free gift${free.length > 1 ? "s" : ""} included</td><td class="r" style="color:#177245;font-weight:700">${free.length}</td></tr>` : ""}
+      <tr class="grand"><td>TOTAL</td><td class="r">${money(o.total)}</td></tr>
+    </table>
+    <div class="pay">${o.pay === "upi" ? "📱 UPI on delivery" : "💵 Cash on delivery"} · ${esc(normStatus(o.status))}</div>
+    <div class="ft">
+      Weights shown are before cleaning unless the item says otherwise.<br>
+      ${s.gstin ? "" : "This is a bill of supply. "}Thank you for your order — Goodness You Can Trust!<br>
+      huntandeat.shop
+    </div>
+    <div class="noprint" style="text-align:center;margin-top:20px">
+      <button onclick="window.print()" style="background:#A6212E;color:#fff;border:none;border-radius:9px;padding:11px 22px;font-size:14px;font-weight:700;cursor:pointer">🖨️ Print / Save as PDF</button>
+    </div>
+  </body></html>`;
+}
+
+function printBill(o, s) {
+  const w = window.open("", "_blank", "width=620,height=820");
+  if (!w) { alert("Popup blocked — allow popups for this site to open the bill."); return; }
+  w.document.write(billHTML(o, s || {})); w.document.close(); w.focus();
+}
+
+/* Same numbers, written so they read on a phone. */
+function billText(o, s) {
+  const { paid, free } = billLines(o);
+  const money = (n) => "₹" + Number(n || 0).toLocaleString("en-IN");
+  const L = [];
+  L.push("*HUNT & EAT* 🐓");
+  L.push("Bill " + o.id + " · " + (o.slotDate || (o.placedAt || "").slice(0, 10)));
+  L.push("");
+  paid.forEach((i) => L.push(i.qty + " × " + i.name + " — " + money(Number(i.price) * Number(i.qty))));
+  free.forEach((i) => L.push(i.qty + " × " + i.name + " — FREE 🎁"));
+  L.push("");
+  L.push("Item total: " + money(o.subtotal));
+  L.push("Delivery: " + (Number(o.delFee) ? money(o.delFee) : "FREE"));
+  L.push("*Total: " + money(o.total) + "*");
+  L.push(o.pay === "upi" ? "UPI on delivery" : "Cash on delivery");
+  L.push("");
+  L.push("Thank you! " + (s && s.phone ? s.phone + " · " : "") + "huntandeat.shop");
+  return L.join("\n");
 }
 
 /* ---- Print KOT (kitchen order ticket) ---- */
@@ -709,7 +1006,7 @@ function placedWhen(iso) {
   return { when: when, ago: ago, fresh: mins < 120 };
 }
 
-function Orders({ orders, saveOrders, slots }) {
+function Orders({ orders, saveOrders, slots, settings }) {
   const [filter, setFilter] = useState("pending");
   const [slotPick, setSlotPick] = useState("all");
   const todayKeyInit = dkey(new Date());
@@ -984,6 +1281,11 @@ function Orders({ orders, saveOrders, slots }) {
               </select>
               <span style={{ fontSize: 12, fontWeight: 700, color: o.status === "Delivered" ? BRAND.ok : o.status === "Cancelled" ? BRAND.danger : "#B07A1A" }}>● {o.status}</span>
               <button onClick={() => printKOT(o)} style={{ background: "#241E1A", color: "#fff", border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>🖨️ Print KOT</button>
+              <button onClick={() => printBill(o, settings || {})} title="Customer bill — print or save as PDF"
+                style={{ background: "#fff", color: BRAND.red, border: "1.5px solid " + BRAND.red, borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>🧾 Bill</button>
+              <a href={`https://wa.me/91${(o.phone || "").replace(/\D/g, "").slice(-10)}?text=${encodeURIComponent(billText(o, settings || {}))}`}
+                target="_blank" rel="noreferrer" title="Send the bill to the customer on WhatsApp"
+                style={{ background: "#fff", color: "#1FA855", border: "1.5px solid #1FA855", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, textDecoration: "none" }}>💬 Send bill</a>
               {o.loc && (
                 <a href={`https://www.google.com/maps?q=${o.loc.lat},${o.loc.lng}`} target="_blank" rel="noreferrer" style={{ background: "#1a73e8", color: "#fff", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 700, textDecoration: "none" }}>📍 Map</a>
               )}
@@ -1482,6 +1784,44 @@ async function fetchDays(base, ns, keys, onProgress, bucket) {
     if (onProgress) onProgress(Math.min(keys.length, i + SIZE), keys.length);
   }
   return byDay;
+}
+
+/* ---------------- Excel writer ----------------
+   myBillBook's bulk upload asks for .xlsx, so a CSV renamed is no good.
+   SheetJS is pulled in only when the Billing tab is actually used, the same
+   way the map is — it is nearly a megabyte and most sessions never need it. */
+let xlsxLoading = null;
+function loadXLSX() {
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  if (xlsxLoading) return xlsxLoading;
+  xlsxLoading = new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = XLSX_SRC;
+    s.onload = () => res(window.XLSX);
+    s.onerror = () => { xlsxLoading = null; rej(new Error("no-xlsx")); };
+    document.head.appendChild(s);
+  });
+  return xlsxLoading;
+}
+
+/* Each sheet is [[header…],[row…]…]. Falls back to CSV if the library
+   can't be fetched, so a bad connection still gets the data out. */
+async function downloadXLSX(filename, sheets) {
+  let XL;
+  try { XL = await loadXLSX(); } catch {
+    sheets.forEach((s) => downloadCSV(filename.replace(/\.xlsx$/, "") + "-" + s.name + ".csv", s.rows));
+    alert("Couldn't load the Excel builder (internet?), so the data came down as CSV instead.\n\nOpen it in Excel and use Save As → .xlsx before importing.");
+    return;
+  }
+  const wb = XL.utils.book_new();
+  sheets.forEach((s) => {
+    const ws = XL.utils.aoa_to_sheet(s.rows);
+    ws["!cols"] = (s.rows[0] || []).map((h, i) => ({
+      wch: Math.min(42, Math.max(10, ...s.rows.slice(0, 200).map((r) => String(r[i] == null ? "" : r[i]).length + 2))),
+    }));
+    XL.utils.book_append_sheet(wb, ws, s.name.slice(0, 31));
+  });
+  XL.writeFile(wb, filename);
 }
 
 function downloadCSV(filename, rows) {
@@ -2189,6 +2529,626 @@ const daysSince = (iso) => {
   const d = (Date.now() - new Date(iso).getTime()) / 86400000;
   return isFinite(d) ? Math.floor(d) : 9999;
 };
+
+/* ---------------- Stock: materials, purchases, closing count ---------------- */
+function StockTab({ stock, saveStock, orders, products, saveCore }) {
+  const today = dkey(new Date());
+  const [view, setView] = useState("mats");
+  const mats = stock.materials || [];
+  const [edit, setEdit] = useState(null);
+  const [buy, setBuy] = useState(null);
+  const [counts, setCounts] = useState({});
+
+  const saveMat = () => {
+    if (!edit.name.trim()) return alert("Give the material a name.");
+    const list = edit.id ? mats.map((m) => (m.id === edit.id ? edit : m)) : [...mats, { ...edit, id: "m" + Date.now() }];
+    saveStock({ materials: list }); setEdit(null);
+  };
+  const addBuy = () => {
+    if (!buy.matId) return alert("Pick which material you bought.");
+    if (!nk(buy.qty)) return alert("Enter how many kg you bought.");
+    if (!nk(buy.amount)) return alert("Enter what you paid in total.");
+    saveStock({ purchases: [{ ...buy, id: "b" + Date.now(), qty: nk(buy.qty), amount: nk(buy.amount) }, ...(stock.purchases || [])] });
+    setBuy(null);
+  };
+  const closeDay = () => {
+    const entries = Object.keys(counts).filter((k) => counts[k] !== "" && counts[k] != null);
+    if (!entries.length) return alert("Enter at least one actual weight.");
+    const kept = (stock.counts || []).filter((c) => !(c.date === today && entries.includes(c.matId)));
+    const add = entries.map((m) => ({ id: "c" + Date.now() + m, date: today, matId: m, actual: nk(counts[m]) }));
+    saveStock({ counts: [...add, ...kept] });
+    setCounts({});
+    alert("Day closed. Any gap between expected and actual is now showing as wastage in the Day book.");
+  };
+
+  const mapped = products.filter((p) => p.matId && nk(p.useKg));
+  const unmapped = products.filter((p) => !p.matId || !nk(p.useKg));
+  const card = { background: "#fff", borderRadius: 12, padding: "15px 17px", marginBottom: 13 };
+  const tabBtn = (k, l) => (
+    <button key={k} onClick={() => setView(k)} style={{ background: view === k ? BRAND.red : "#fff", color: view === k ? "#fff" : BRAND.ink,
+      border: "1px solid " + (view === k ? BRAND.red : "#e5dfd0"), borderRadius: 999, padding: "7px 15px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>{l}</button>
+  );
+
+  return (
+    <>
+      <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 13 }}>
+        {tabBtn("mats", "⚖️ What's in stock")}{tabBtn("buy", "🛒 Purchases")}{tabBtn("close", "🌙 Close the day")}{tabBtn("yield", "🔪 Yield setup")}
+      </div>
+
+      {view === "mats" && <>
+        <div style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 14 }}>Raw material on hand</div>
+            <div style={{ fontSize: 12.5, color: "#6b675e", marginTop: 2 }}>
+              Counted stock, plus what you bought since, minus what the sales ate.
+            </div>
+          </div>
+          <button onClick={() => setEdit({ name: "", cost: 0, lowAt: 2 })} style={{ background: BRAND.red, color: "#fff", border: "none", borderRadius: 10, padding: "10px 16px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>+ Add material</button>
+        </div>
+        {!mats.length && <div style={{ ...card, color: "#6b675e", fontSize: 13, lineHeight: 1.6 }}>
+          Nothing set up yet. Add what you <b>buy</b>, not what you sell — "Country chicken (live)",
+          "Mutton carcass", "Vanjaram", "Prawns". You sell packs; you buy kilos. The Yield setup tab
+          then joins the two.
+        </div>}
+        <div style={{ display: "grid", gap: 8 }}>
+          {mats.map((m) => {
+            const h = matOnHand(stock, orders, products, m.id, today);
+            const low = h.onHand <= nk(m.lowAt);
+            const rate = matCost(stock, m.id, today);
+            return (
+              <div key={m.id} style={{ ...card, marginBottom: 0, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap",
+                borderLeft: "4px solid " + (low ? BRAND.danger : BRAND.ok) }}>
+                <div style={{ flex: 1, minWidth: 160 }}>
+                  <div style={{ fontWeight: 800, fontSize: 14 }}>{m.name}</div>
+                  <div style={{ fontSize: 11.5, color: "#8a857a", marginTop: 2 }}>
+                    {h.countedOn ? "counted " + h.countedOn : "never counted"} · bought {h.boughtSince} kg · sold {h.usedSince} kg since
+                  </div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: low ? BRAND.danger : BRAND.ink }}>{h.onHand} kg</div>
+                  <div style={{ fontSize: 11.5, color: "#8a857a" }}>{rate ? rup(Math.round(rate)) + "/kg" : "no rate yet"}</div>
+                </div>
+                <button onClick={() => setEdit(m)} style={{ background: "#f0ece1", border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Edit</button>
+              </div>
+            );
+          })}
+        </div>
+      </>}
+
+      {view === "buy" && <>
+        <div style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 14 }}>What you bought</div>
+            <div style={{ fontSize: 12.5, color: "#6b675e", marginTop: 2 }}>Every morning's purchase. This sets the rate your sales are costed at.</div>
+          </div>
+          <button onClick={() => setBuy({ date: today, matId: mats[0] ? mats[0].id : "", qty: "", amount: "", supplier: "" })}
+            disabled={!mats.length}
+            style={{ background: mats.length ? BRAND.red : "#cfc9ba", color: "#fff", border: "none", borderRadius: 10, padding: "10px 16px", fontWeight: 800, fontSize: 13, cursor: mats.length ? "pointer" : "not-allowed" }}>+ Add purchase</button>
+        </div>
+        <div style={{ display: "grid", gap: 7 }}>
+          {(stock.purchases || []).slice(0, 60).map((p) => {
+            const m = mats.find((x) => x.id === p.matId);
+            return (
+              <div key={p.id} style={{ ...card, marginBottom: 0, padding: "11px 14px", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ fontSize: 11.5, color: "#8a857a", fontWeight: 700, minWidth: 82 }}>{p.date}</div>
+                <div style={{ flex: 1, minWidth: 140 }}>
+                  <b style={{ fontSize: 13.5 }}>{m ? m.name : "(deleted material)"}</b>
+                  {p.supplier ? <span style={{ fontSize: 11.5, color: "#8a857a" }}> · {p.supplier}</span> : null}
+                </div>
+                <div style={{ fontSize: 13 }}>{nk(p.qty)} kg</div>
+                <div style={{ fontSize: 13, fontWeight: 800 }}>{rup(nk(p.amount))}</div>
+                <div style={{ fontSize: 11.5, color: BRAND.red, fontWeight: 700 }}>{nk(p.qty) ? rup(Math.round(nk(p.amount) / nk(p.qty))) + "/kg" : ""}</div>
+                <button onClick={() => { if (confirm("Delete this purchase?")) saveStock({ purchases: (stock.purchases || []).filter((x) => x.id !== p.id) }); }}
+                  style={{ background: "none", border: "none", color: BRAND.danger, cursor: "pointer", fontSize: 15 }}>✕</button>
+              </div>
+            );
+          })}
+          {!(stock.purchases || []).length && <div style={{ ...card, color: "#6b675e", fontSize: 13 }}>No purchases recorded yet.</div>}
+        </div>
+      </>}
+
+      {view === "close" && <>
+        <div style={card}>
+          <div style={{ fontWeight: 800, fontSize: 14 }}>Close the day — {today}</div>
+          <div style={{ fontSize: 12.5, color: "#6b675e", marginTop: 3, lineHeight: 1.6 }}>
+            Weigh what's actually left and type it in. Whatever the books expected but isn't on the
+            table is wastage — for a perishable business that is the number that decides your month.
+            <div style={{ marginTop: 6 }}>
+              Do this <b>after your last sale</b>. The count becomes the truth for everything up to and
+              including today, so anything sold after you close shows up in tomorrow's stock instead.
+            </div>
+          </div>
+        </div>
+        {!mats.length && <div style={{ ...card, color: "#6b675e", fontSize: 13 }}>Add materials first.</div>}
+        <div style={{ display: "grid", gap: 8 }}>
+          {mats.map((m) => {
+            const h = matOnHand(stock, orders, products, m.id, today);
+            const typed = counts[m.id];
+            const gap = typed === "" || typed == null ? null : kg(h.onHand - nk(typed));
+            return (
+              <div key={m.id} style={{ ...card, marginBottom: 0, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 150 }}>
+                  <div style={{ fontWeight: 800, fontSize: 13.5 }}>{m.name}</div>
+                  <div style={{ fontSize: 11.5, color: "#8a857a" }}>books say {h.onHand} kg</div>
+                </div>
+                <label style={{ fontSize: 11, color: "#8a857a", fontWeight: 700 }}>actually left (kg)
+                  <input value={typed == null ? "" : typed} inputMode="decimal" placeholder="0"
+                    onChange={(e) => setCounts({ ...counts, [m.id]: e.target.value.replace(/[^\d.]/g, "") })}
+                    style={{ ...inp, width: 100, marginTop: 2, textAlign: "center", fontWeight: 800 }} /></label>
+                {gap != null && <div style={{ fontSize: 12.5, fontWeight: 800, minWidth: 120, textAlign: "right",
+                  color: gap > 0.001 ? BRAND.danger : gap < -0.001 ? "#8E6A1F" : BRAND.ok }}>
+                  {gap > 0.001 ? "lost " + gap + " kg" : gap < -0.001 ? "extra " + Math.abs(gap) + " kg" : "spot on"}
+                </div>}
+              </div>
+            );
+          })}
+        </div>
+        {mats.length > 0 && <button onClick={closeDay} style={{ width: "100%", background: BRAND.red, color: "#fff", border: "none", borderRadius: 11, padding: 14, fontWeight: 800, fontSize: 14.5, cursor: "pointer", marginTop: 4 }}>
+          🌙 Save today's closing count
+        </button>}
+      </>}
+
+      {view === "yield" && <>
+        <div style={card}>
+          <div style={{ fontWeight: 800, fontSize: 14 }}>Yield — how many raw kilos each pack eats</div>
+          <div style={{ fontSize: 12.5, color: "#6b675e", marginTop: 3, lineHeight: 1.6 }}>
+            This is the bit no billing software does. A 500 g curry-cut pack doesn't come from 500 g of
+            live bird — it comes from roughly 620 g once the feathers, head and innards are gone. Put the
+            <b> raw kilos</b> in, not the pack size, and your profit becomes real.
+          </div>
+        </div>
+        {unmapped.length > 0 && <div style={{ background: "#FFF6E8", border: "1px solid #F0D9A8", borderRadius: 12, padding: "12px 15px", fontSize: 12.5, color: "#7A5B14", marginBottom: 13, lineHeight: 1.55 }}>
+          <b>{unmapped.length} item{unmapped.length === 1 ? "" : "s"} not linked yet.</b> Anything unlinked sells
+          at full margin in the Day book, because nothing is costed against it. Link them or your profit will read high.
+        </div>}
+        <div style={{ display: "grid", gap: 7 }}>
+          {products.map((p) => (
+            <div key={p.id} style={{ ...card, marginBottom: 0, padding: "11px 14px", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap",
+              borderLeft: "3px solid " + (p.matId && nk(p.useKg) ? BRAND.ok : "#e5dfd0") }}>
+              <div style={{ flex: 1, minWidth: 180 }}>
+                <div style={{ fontWeight: 700, fontSize: 13 }}>{p.emoji} {p.name}</div>
+                <div style={{ fontSize: 11, color: "#8a857a" }}>sells at {rup(nk(p.price))}{p.net && p.net !== "—" ? " · net " + p.net : ""}</div>
+              </div>
+              <select value={p.matId || ""} onChange={(e) => saveCore({ products: products.map((x) => x.id === p.id ? { ...x, matId: e.target.value } : x) })}
+                style={{ ...inp, width: "auto", padding: "6px 9px", fontSize: 12.5 }}>
+                <option value="">— not linked —</option>
+                {mats.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+              <label style={{ fontSize: 10.5, color: "#8a857a", fontWeight: 700 }}>raw kg
+                <input defaultValue={p.useKg || ""} inputMode="decimal" placeholder="0.00"
+                  onBlur={(e) => { const v = nk(e.target.value); if (v !== nk(p.useKg)) saveCore({ products: products.map((x) => x.id === p.id ? { ...x, useKg: v } : x) }); }}
+                  style={{ ...inp, width: 82, marginTop: 2, textAlign: "center", fontWeight: 800 }} /></label>
+              {p.matId && nk(p.useKg) ? (() => {
+                const c = nk(p.useKg) * matCost(stock, p.matId, today);
+                const marg = nk(p.price) - c;
+                return <div style={{ minWidth: 104, textAlign: "right" }}>
+                  <div style={{ fontSize: 11, color: "#8a857a" }}>costs {rup(Math.round(c))}</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: marg > 0 ? BRAND.ok : BRAND.danger }}>{marg > 0 ? "+" : ""}{rup(Math.round(marg))}</div>
+                </div>;
+              })() : <div style={{ minWidth: 104 }} />}
+            </div>
+          ))}
+        </div>
+      </>}
+
+      {edit && <Modal close={() => setEdit(null)}>
+        <h3 className="display" style={{ fontWeight: 800, margin: "0 0 10px" }}>{edit.id ? "Edit material" : "New material"}</h3>
+        <div style={{ display: "grid", gap: 10 }}>
+          <Field l="What you buy (not what you sell)"><input style={inp} value={edit.name} placeholder="Country chicken (live)" onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
+          <Field l="Fallback rate per kg — used only until you record a purchase"><input style={inp} inputMode="decimal" value={edit.cost} onChange={(e) => setEdit({ ...edit, cost: e.target.value.replace(/[^\d.]/g, "") })} /></Field>
+          <Field l="Warn me when stock drops below (kg)"><input style={inp} inputMode="decimal" value={edit.lowAt} onChange={(e) => setEdit({ ...edit, lowAt: e.target.value.replace(/[^\d.]/g, "") })} /></Field>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={saveMat} style={{ flex: 1, background: BRAND.red, color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 800, cursor: "pointer" }}>Save</button>
+            {edit.id && <button onClick={() => { if (confirm("Delete " + edit.name + "? Its purchases and counts stay in the records.")) { saveStock({ materials: mats.filter((m) => m.id !== edit.id) }); setEdit(null); } }}
+              style={{ background: "#fff", color: BRAND.danger, border: "1.5px solid " + BRAND.danger, borderRadius: 10, padding: "12px 16px", fontWeight: 700, cursor: "pointer" }}>Delete</button>}
+          </div>
+        </div>
+      </Modal>}
+
+      {buy && <Modal close={() => setBuy(null)}>
+        <h3 className="display" style={{ fontWeight: 800, margin: "0 0 10px" }}>Add purchase</h3>
+        <div style={{ display: "grid", gap: 10 }}>
+          <Field l="Date"><input style={inp} type="date" value={buy.date} onChange={(e) => setBuy({ ...buy, date: e.target.value })} /></Field>
+          <Field l="Material"><select style={inp} value={buy.matId} onChange={(e) => setBuy({ ...buy, matId: e.target.value })}>
+            {mats.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>
+          <Field l="How many kg"><input style={inp} inputMode="decimal" value={buy.qty} placeholder="20" onChange={(e) => setBuy({ ...buy, qty: e.target.value.replace(/[^\d.]/g, "") })} /></Field>
+          <Field l="Total paid (₹)"><input style={inp} inputMode="decimal" value={buy.amount} placeholder="8400" onChange={(e) => setBuy({ ...buy, amount: e.target.value.replace(/[^\d.]/g, "") })} /></Field>
+          <Field l="Supplier (optional)"><input style={inp} value={buy.supplier} onChange={(e) => setBuy({ ...buy, supplier: e.target.value })} /></Field>
+          {nk(buy.qty) > 0 && nk(buy.amount) > 0 &&
+            <div style={{ background: BRAND.creamSoft, borderRadius: 9, padding: "9px 12px", fontSize: 13, fontWeight: 700 }}>
+              That's {rup(Math.round(nk(buy.amount) / nk(buy.qty)))} per kg
+            </div>}
+          <button onClick={addBuy} style={{ background: BRAND.red, color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 800, cursor: "pointer" }}>Save purchase</button>
+        </div>
+      </Modal>}
+    </>
+  );
+}
+
+/* ---------------- Counter billing (walk-ins) ----------------
+   Saved as an ordinary order with src:"counter", already Delivered, so it
+   lands in Cash, the day book and the myBillBook export with no special
+   handling anywhere. Nothing is written until the save confirms. */
+function Counter({ products, addCounterSale, settings, cats, stock }) {
+  const closedToday = ((stock || {}).counts || []).some((c) => c.date === dkey(new Date()));
+  const [cart, setCart] = useState({});
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [pay, setPay] = useState("cash");
+  const [q, setQ] = useState("");
+  const [cat, setCat] = useState("all");
+  const [saving, setSaving] = useState(false);
+  const [done, setDone] = useState(null);
+
+  const inStock = products.filter((p) => p.stock !== false);
+  const shown = inStock.filter((p) =>
+    (cat === "all" || p.cat === cat) &&
+    (!q.trim() || (p.name || "").toLowerCase().includes(q.trim().toLowerCase())));
+  const lines = Object.keys(cart).filter((k) => cart[k] > 0)
+    .map((id) => { const p = products.find((x) => x.id === id); return p ? { p, qty: cart[id] } : null; })
+    .filter(Boolean);
+  const total = lines.reduce((a, l) => a + nk(l.p.price) * l.qty, 0);
+  /* Functional update, not a spread of the captured `cart`: two quick taps at
+     the counter both read the same stale object and the second one silently
+     overwrites the first, so you bill one bird instead of two. */
+  const bump = (id, d) => setCart((c) => ({ ...c, [id]: Math.max(0, (c[id] || 0) + d) }));
+
+  const save = async () => {
+    if (!lines.length) return;
+    setSaving(true);
+    const now = new Date();
+    const sale = {
+      id: "CB" + String(now.getTime()).slice(-8),
+      src: "counter", status: "Delivered",
+      items: lines.map((l) => ({ name: l.p.name, pid: l.p.id, qty: l.qty, price: nk(l.p.price), mrp: nk(l.p.mrp) })),
+      subtotal: total, delFee: 0, total,
+      name: name.trim() || "Counter sale", phone: phone.replace(/\D/g, "").slice(-10),
+      address: "Walk-in at shop", pincode: "",
+      pay: pay === "upi" ? "upi" : "cod",
+      slotDate: dkey(now), slotLabel: "Counter",
+      placedAt: now.toISOString(), cashSettled: true,
+    };
+    const ok = await addCounterSale(sale);
+    setSaving(false);
+    if (ok) { setDone(sale); setCart({}); setName(""); setPhone(""); }
+  };
+
+  const card = { background: "#fff", borderRadius: 12, padding: "14px 16px", marginBottom: 12 };
+  if (done) return (
+    <div style={{ ...card, textAlign: "center", padding: 26 }}>
+      <div style={{ fontSize: 44 }}>✅</div>
+      <div className="display" style={{ fontSize: 21, fontWeight: 800, margin: "6px 0 3px" }}>Bill {done.id} saved</div>
+      <div style={{ fontSize: 15, color: "#6b675e", marginBottom: 16 }}>{rup(done.total)} · {done.pay === "upi" ? "UPI" : "Cash"}</div>
+      <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+        <button onClick={() => printBill(done, settings)} style={{ background: "#241E1A", color: "#fff", border: "none", borderRadius: 10, padding: "12px 20px", fontWeight: 800, cursor: "pointer" }}>🖨️ Print bill</button>
+        {done.phone.length === 10 && <a href={`https://wa.me/91${done.phone}?text=${encodeURIComponent(billText(done, settings))}`} target="_blank" rel="noreferrer"
+          style={{ background: "#1FA855", color: "#fff", borderRadius: 10, padding: "12px 20px", fontWeight: 800, textDecoration: "none" }}>💬 Send bill</a>}
+        <button onClick={() => setDone(null)} style={{ background: BRAND.red, color: "#fff", border: "none", borderRadius: 10, padding: "12px 20px", fontWeight: 800, cursor: "pointer" }}>Next customer →</button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ display: "flex", gap: 13, alignItems: "flex-start", flexWrap: "wrap" }}>
+      <div style={{ flex: "1 1 380px", minWidth: 300 }}>
+        <div style={{ ...card, display: "flex", gap: 7, flexWrap: "wrap" }}>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search the menu…" style={{ ...inp, flex: 1, minWidth: 140 }} />
+          <select value={cat} onChange={(e) => setCat(e.target.value)} style={{ ...inp, width: "auto" }}>
+            <option value="all">All</option>
+            {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(152px,1fr))", gap: 8 }}>
+          {shown.map((p) => (
+            <button key={p.id} onClick={() => bump(p.id, 1)} style={{ background: cart[p.id] ? BRAND.creamSoft : "#fff", border: "1.5px solid " + (cart[p.id] ? BRAND.red : "#e9e3d6"),
+              borderRadius: 11, padding: "11px 12px", textAlign: "left", cursor: "pointer", fontFamily: "inherit", position: "relative" }}>
+              <div style={{ fontSize: 19 }}>{p.emoji}</div>
+              <div style={{ fontSize: 12.5, fontWeight: 700, lineHeight: 1.3, margin: "3px 0" }}>{p.name}</div>
+              <div style={{ fontSize: 13.5, fontWeight: 800, color: BRAND.red }}>{rup(nk(p.price))}</div>
+              {cart[p.id] > 0 && <div style={{ position: "absolute", top: 7, right: 7, background: BRAND.red, color: "#fff", borderRadius: 999, minWidth: 22, height: 22, fontSize: 12, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px" }}>{cart[p.id]}</div>}
+            </button>
+          ))}
+          {!shown.length && <div style={{ color: "#8a857a", fontSize: 13, padding: 12 }}>Nothing matches.</div>}
+        </div>
+      </div>
+
+      <div style={{ flex: "0 1 330px", minWidth: 280, position: "sticky", top: 12 }}>
+        {closedToday && <div style={{ background: "#FFF6E8", border: "1px solid #F0D9A8", borderRadius: 11, padding: "10px 13px", fontSize: 12, color: "#7A5B14", marginBottom: 12, lineHeight: 1.5 }}>
+          You've already closed today's stock count. This sale still bills normally, but it will show
+          against <b>tomorrow's</b> stock.
+        </div>}
+        <div style={card}>
+          <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 9 }}>🛒 This bill</div>
+          {!lines.length && <div style={{ color: "#8a857a", fontSize: 13, padding: "10px 0" }}>Tap items on the left.</div>}
+          {lines.map((l) => (
+            <div key={l.p.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "7px 0", borderBottom: "1px solid #f2ede2" }}>
+              <div style={{ flex: 1, fontSize: 12.5, fontWeight: 600 }}>{l.p.name}</div>
+              <button onClick={() => bump(l.p.id, -1)} style={{ width: 26, height: 26, borderRadius: 7, border: "1px solid #e5dfd0", background: "#fff", cursor: "pointer", fontWeight: 800 }}>−</button>
+              <span style={{ minWidth: 18, textAlign: "center", fontWeight: 800, fontSize: 13 }}>{l.qty}</span>
+              <button onClick={() => bump(l.p.id, 1)} style={{ width: 26, height: 26, borderRadius: 7, border: "1px solid #e5dfd0", background: "#fff", cursor: "pointer", fontWeight: 800 }}>+</button>
+              <div style={{ minWidth: 58, textAlign: "right", fontWeight: 800, fontSize: 13 }}>{rup(nk(l.p.price) * l.qty)}</div>
+            </div>
+          ))}
+          {lines.length > 0 && <>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "11px 0 3px", fontSize: 19, fontWeight: 800 }}>
+              <span>Total</span><span>{rup(total)}</span>
+            </div>
+            <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Customer name (optional)" style={inp} />
+              <input value={phone} onChange={(e) => setPhone(e.target.value.replace(/[^\d]/g, "").slice(0, 10))} inputMode="numeric" placeholder="Mobile (optional — to send the bill)" style={inp} />
+              <div style={{ display: "flex", gap: 7 }}>
+                {[["cash", "💵 Cash"], ["upi", "📱 UPI"]].map(([k, l]) => (
+                  <button key={k} onClick={() => setPay(k)} style={{ flex: 1, background: pay === k ? BRAND.ink : "#fff", color: pay === k ? "#fff" : BRAND.ink,
+                    border: "1.5px solid " + (pay === k ? BRAND.ink : "#e5dfd0"), borderRadius: 9, padding: "10px 0", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>{l}</button>
+                ))}
+              </div>
+              <button onClick={save} disabled={saving} style={{ background: saving ? "#cfc9ba" : BRAND.red, color: "#fff", border: "none", borderRadius: 11, padding: 14, fontWeight: 800, fontSize: 15, cursor: saving ? "wait" : "pointer" }}>
+                {saving ? "Saving…" : "Save bill · " + rup(total)}
+              </button>
+              <button onClick={() => setCart({})} style={{ background: "none", border: "none", color: "#8a857a", fontSize: 12.5, cursor: "pointer", textDecoration: "underline" }}>Clear</button>
+            </div>
+          </>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Day book: what you actually made ---------------- */
+function DayBook({ stock, saveStock, orders, products }) {
+  const today = dkey(new Date());
+  const [from, setFrom] = useState(today);
+  const [to, setTo] = useState(today);
+  const [exp, setExp] = useState(null);
+  const quick = (d) => { const x = new Date(); x.setDate(x.getDate() - d); setFrom(dkey(x)); setTo(today); };
+  const b = dayBook(stock, orders, products, from, to);
+  const margin = b.revenue ? Math.round((b.net / b.revenue) * 100) : 0;
+  const dayExp = (stock.expenses || []).filter((e) => e.date >= from && e.date <= to);
+
+  const addExp = () => {
+    if (!nk(exp.amount)) return alert("Enter an amount.");
+    saveStock({ expenses: [{ ...exp, id: "e" + Date.now(), amount: nk(exp.amount) }, ...(stock.expenses || [])] });
+    setExp(null);
+  };
+  const card = { background: "#fff", borderRadius: 12, padding: "15px 17px", marginBottom: 13 };
+  const Line = ({ l, v, c, big, note }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: big ? "11px 0 3px" : "6px 0",
+      borderTop: big ? "2px solid #241E1A" : "none", marginTop: big ? 6 : 0, gap: 10 }}>
+      <span style={{ fontSize: big ? 15.5 : 13.5, fontWeight: big ? 800 : 600, color: c || BRAND.ink }}>
+        {l}{note ? <span style={{ fontSize: 11.5, color: "#8a857a", fontWeight: 500 }}> {note}</span> : null}
+      </span>
+      <span style={{ fontSize: big ? 23 : 14.5, fontWeight: 800, color: c || BRAND.ink, whiteSpace: "nowrap" }}>{v}</span>
+    </div>
+  );
+
+  return (
+    <>
+      <div style={{ ...card, display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: 11.5, color: "#8a857a", fontWeight: 700 }}>PERIOD</span>
+        <input type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} style={{ ...inp, width: "auto", padding: "5px 10px", fontSize: 12.5 }} />
+        <span style={{ fontSize: 12.5 }}>to</span>
+        <input type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} style={{ ...inp, width: "auto", padding: "5px 10px", fontSize: 12.5 }} />
+        {[["Today", 0], ["Last 7 days", 6], ["This month", 29]].map(([l, d]) => (
+          <button key={l} onClick={() => quick(d)} style={{ background: "#fff", border: "1px solid #e5dfd0", borderRadius: 999, padding: "6px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{l}</button>
+        ))}
+      </div>
+
+      <div style={card}>
+        <Line l="Sales" v={rup(Math.round(b.revenue))} note={`· ${b.bills} bill${b.bills === 1 ? "" : "s"}${b.counterBills ? ", " + b.counterBills + " at the counter" : ""}`} />
+        <Line l="Cost of what you sold" v={"− " + rup(Math.round(b.cogs))} c="#6b675e" />
+        <Line l="Wastage" v={"− " + rup(Math.round(b.waste))} c={b.waste > 0 ? BRAND.danger : "#6b675e"} />
+        <Line l="Expenses" v={"− " + rup(Math.round(b.expenses))} c="#6b675e" />
+        <Line l="You actually made" v={rup(Math.round(b.net))} c={b.net >= 0 ? BRAND.ok : BRAND.danger} big />
+        <div style={{ fontSize: 12, color: "#8a857a", textAlign: "right", marginTop: 3 }}>
+          {margin}% of sales · delivery fees {rup(Math.round(b.delivery))} of it
+        </div>
+      </div>
+
+      {b.unmapped > 0 && <div style={{ background: "#FFF6E8", border: "1px solid #F0D9A8", borderRadius: 12, padding: "12px 15px", fontSize: 12.5, color: "#7A5B14", marginBottom: 13, lineHeight: 1.55 }}>
+        <b>{b.unmapped} of these {b.bills} bills had nothing costed against them.</b> Those items aren't
+        linked to a material yet, so this profit is reading higher than it really is. Fix it under
+        Stock → Yield setup.
+      </div>}
+
+      <div style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 14 }}>Expenses in this period</div>
+          <div style={{ fontSize: 12.5, color: "#6b675e", marginTop: 2 }}>Petrol, ice, packing, labour, rent — everything that isn't the meat itself.</div>
+        </div>
+        <button onClick={() => setExp({ date: today, head: "Fuel", amount: "", note: "" })} style={{ background: BRAND.red, color: "#fff", border: "none", borderRadius: 10, padding: "10px 16px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>+ Add expense</button>
+      </div>
+      <div style={{ display: "grid", gap: 7 }}>
+        {dayExp.map((e) => (
+          <div key={e.id} style={{ ...card, marginBottom: 0, padding: "10px 14px", display: "flex", gap: 10, alignItems: "center" }}>
+            <div style={{ fontSize: 11.5, color: "#8a857a", fontWeight: 700, minWidth: 82 }}>{e.date}</div>
+            <div style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{e.head}{e.note ? <span style={{ color: "#8a857a", fontWeight: 400 }}> · {e.note}</span> : null}</div>
+            <div style={{ fontWeight: 800, fontSize: 13.5 }}>{rup(nk(e.amount))}</div>
+            <button onClick={() => { if (confirm("Delete this expense?")) saveStock({ expenses: (stock.expenses || []).filter((x) => x.id !== e.id) }); }}
+              style={{ background: "none", border: "none", color: BRAND.danger, cursor: "pointer", fontSize: 15 }}>✕</button>
+          </div>
+        ))}
+        {!dayExp.length && <div style={{ ...card, color: "#6b675e", fontSize: 13 }}>No expenses recorded in this period.</div>}
+      </div>
+
+      {exp && <Modal close={() => setExp(null)}>
+        <h3 className="display" style={{ fontWeight: 800, margin: "0 0 10px" }}>Add expense</h3>
+        <div style={{ display: "grid", gap: 10 }}>
+          <Field l="Date"><input style={inp} type="date" value={exp.date} onChange={(e) => setExp({ ...exp, date: e.target.value })} /></Field>
+          <Field l="What for"><select style={inp} value={exp.head} onChange={(e) => setExp({ ...exp, head: e.target.value })}>
+            {["Fuel", "Ice", "Packing", "Labour", "Rent", "Electricity", "Phone / internet", "Repairs", "Other"].map((h) => <option key={h}>{h}</option>)}</select></Field>
+          <Field l="Amount (₹)"><input style={inp} inputMode="decimal" value={exp.amount} onChange={(e) => setExp({ ...exp, amount: e.target.value.replace(/[^\d.]/g, "") })} /></Field>
+          <Field l="Note (optional)"><input style={inp} value={exp.note} onChange={(e) => setExp({ ...exp, note: e.target.value })} /></Field>
+          <button onClick={addExp} style={{ background: BRAND.red, color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 800, cursor: "pointer" }}>Save expense</button>
+        </div>
+      </Modal>}
+    </>
+  );
+}
+
+/* ---------------- Billing exports ----------------
+   myBillBook takes bulk Excel uploads for Items and Parties, so those two go
+   straight in. It publishes no bulk import for sales invoices, so the sales
+   workbook is built to raise bills from (or hand to a CA) rather than to
+   upload blind — the note in the tab says exactly that. */
+function Billing({ orders, products, settings }) {
+  const todayKey = dkey(new Date());
+  const [from, setFrom] = useState(todayKey);
+  const [to, setTo] = useState(todayKey);
+  const [allStatuses, setAllStatuses] = useState(false);
+  const [busy, setBusy] = useState("");
+
+  const quick = (days) => { const d = new Date(); d.setDate(d.getDate() - days); setFrom(dkey(d)); setTo(todayKey); };
+
+  /* Billed on the day it was DELIVERED — that is when the cash actually
+     arrives on a COD order, and one still Processing may yet be cancelled. */
+  const billDate = (o) => (o.slotDate || (o.placedAt || "").slice(0, 10) || "");
+  const live = orders.filter((o) => normStatus(o.status) !== "Cancelled");
+  const pool = allStatuses ? live : live.filter((o) => normStatus(o.status) === "Delivered");
+  const rows = pool.filter((o) => { const d = billDate(o); return d && d >= from && d <= to; })
+    .sort((a, b) => (billDate(a) + (a.id || "")).localeCompare(billDate(b) + (b.id || "")));
+  const pendingInRange = live.filter((o) => normStatus(o.status) !== "Delivered")
+    .filter((o) => { const d = billDate(o); return d && d >= from && d <= to; }).length;
+
+  const sum = rows.reduce((a, o) => {
+    const sub = Number(o.subtotal || 0), fee = Number(o.delFee || 0), tot = Number(o.total || 0);
+    a.sub += sub; a.fee += fee; a.tot += tot;
+    if (o.pay === "upi") a.upi += tot; else a.cod += tot;
+    (o.items || []).forEach((it) => { if (it.free) a.gift += 1; });
+    return a;
+  }, { sub: 0, fee: 0, tot: 0, cod: 0, upi: 0, gift: 0 });
+
+  const span = from === to ? from : from + "_to_" + to;
+
+  const go = async (what, fn) => {
+    setBusy(what);
+    try { await fn(); } catch (e) { alert("Couldn't build that file: " + (e && e.message ? e.message : e)); }
+    setBusy("");
+  };
+
+  const salesBook = () => go("sales", async () => {
+    if (!rows.length) return alert("No orders in that date range.");
+    const lines = [["Bill Date", "Order No", "Customer", "Mobile", "Item", "Qty", "Rate", "Amount", "Free Gift", "Payment", "Pincode"]];
+    rows.forEach((o) => {
+      (o.items || []).forEach((it) => {
+        lines.push([billDate(o), o.id || "", o.name || "", String(o.phone || ""), it.name || "",
+          Number(it.qty || 0), Number(it.price || 0), Number(it.price || 0) * Number(it.qty || 0),
+          it.free ? "FREE" : "", o.pay === "upi" ? "UPI" : "Cash", o.pincode || ""]);
+      });
+      if (Number(o.delFee || 0) > 0) {
+        lines.push([billDate(o), o.id || "", o.name || "", String(o.phone || ""), "Delivery charge",
+          1, Number(o.delFee), Number(o.delFee), "", o.pay === "upi" ? "UPI" : "Cash", o.pincode || ""]);
+      }
+    });
+    const heads = [["Bill Date", "Order No", "Customer", "Mobile", "Address", "Pincode", "Items Subtotal", "Delivery Fee", "Bill Total", "Payment", "Status", "Delivery Slot"]];
+    rows.forEach((o) => heads.push([billDate(o), o.id || "", o.name || "", String(o.phone || ""),
+      o.address || "", o.pincode || "", Number(o.subtotal || 0), Number(o.delFee || 0), Number(o.total || 0),
+      o.pay === "upi" ? "UPI" : "Cash", normStatus(o.status), o.slotLabel || ""]));
+    heads.push([]);
+    heads.push(["", "", "", "", "", "TOTAL", sum.sub, sum.fee, sum.tot, "", "", ""]);
+    await downloadXLSX("hunt-and-eat-sales-" + span + ".xlsx",
+      [{ name: "Order summary", rows: heads }, { name: "Item lines", rows: lines }]);
+  });
+
+  const itemsBook = () => go("items", async () => {
+    if (!products.length) return alert("No menu items to export.");
+    const r = [["Item Name", "Item Code", "Sales Price", "Purchase Price", "HSN/SAC", "GST %", "Unit", "Opening Stock", "Description"]];
+    products.forEach((p) => r.push([p.name || "", p.id || "", Number(p.price || 0), "", "", 0, "PCS", "",
+      [p.pcs && p.pcs !== "—" ? p.pcs : "", p.net && p.net !== "—" ? "Net " + p.net : ""].filter(Boolean).join(" · ")]));
+    await downloadXLSX("hunt-and-eat-items-for-mybillbook.xlsx", [{ name: "Items", rows: r }]);
+  });
+
+  const partyBook = () => go("parties", async () => {
+    const by = new Map();
+    live.forEach((o) => {
+      const ph = String(o.phone || "").replace(/\D/g, "").slice(-10);
+      if (ph.length !== 10) return;
+      const had = by.get(ph);
+      if (!had || (o.placedAt || "") > (had.placedAt || "")) by.set(ph, o);
+    });
+    if (!by.size) return alert("No customers with a valid mobile number yet.");
+    const r = [["Party Name", "Mobile Number", "Billing Address", "Pincode", "Party Type", "GSTIN", "Opening Balance"]];
+    Array.from(by.values()).sort((a, b) => (a.name || "").localeCompare(b.name || ""))
+      .forEach((o) => r.push([(o.name || "").trim() || "Customer " + String(o.phone || "").slice(-4),
+        String(o.phone || "").replace(/\D/g, "").slice(-10), o.address || "", o.pincode || "", "Customer", "", 0]));
+    await downloadXLSX("hunt-and-eat-customers-for-mybillbook.xlsx", [{ name: "Parties", rows: r }]);
+  });
+
+  const card = { background: "#fff", borderRadius: 12, padding: "16px 18px", marginBottom: 14 };
+  const dl = (on) => ({ background: on ? "#cfc9ba" : BRAND.red, color: "#fff", border: "none", borderRadius: 10,
+    padding: "12px 16px", fontWeight: 800, fontSize: 13.5, cursor: on ? "wait" : "pointer", textAlign: "left" });
+  const Stat = ({ l, v, c }) => (
+    <div style={{ background: BRAND.creamSoft, borderRadius: 10, padding: "10px 13px", minWidth: 112 }}>
+      <div style={{ fontSize: 11, color: "#8a857a", fontWeight: 700, textTransform: "uppercase", letterSpacing: .4 }}>{l}</div>
+      <div style={{ fontSize: 19, fontWeight: 800, color: c || BRAND.ink, marginTop: 2 }}>{v}</div>
+    </div>
+  );
+
+  return (
+    <>
+      <div style={card}>
+        <h3 className="display" style={{ fontWeight: 800, margin: "0 0 4px" }}>🧾 Billing exports</h3>
+        <p style={{ fontSize: 12.5, color: "#6b675e", margin: "0 0 12px", lineHeight: 1.55 }}>
+          Excel files shaped for myBillBook. Sales are dated by the day you <b>delivered</b>, not the day
+          the order came in — that is when the cash actually reaches you.
+        </p>
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+          <span style={{ fontSize: 11.5, color: "#8a857a", fontWeight: 700 }}>PERIOD</span>
+          <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)}
+            style={{ ...inp, width: "auto", padding: "5px 10px", fontSize: 12.5 }} />
+          <span style={{ fontSize: 12.5, color: "#6b675e" }}>to</span>
+          <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)}
+            style={{ ...inp, width: "auto", padding: "5px 10px", fontSize: 12.5 }} />
+          {[["Today", 0], ["Last 7 days", 6], ["Last 30 days", 29]].map(([l, d]) => (
+            <button key={l} onClick={() => quick(d)}
+              style={{ background: "#fff", border: "1px solid #e5dfd0", borderRadius: 999, padding: "6px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{l}</button>
+          ))}
+        </div>
+        <label style={{ display: "flex", gap: 7, alignItems: "center", fontSize: 12.5, fontWeight: 700, cursor: "pointer", color: allStatuses ? BRAND.red : "#6b675e" }}>
+          <input type="checkbox" checked={allStatuses} onChange={() => setAllStatuses(!allStatuses)} />
+          Include orders not yet delivered
+          {!allStatuses && pendingInRange > 0 &&
+            <span style={{ color: "#8a857a", fontWeight: 600 }}> — {pendingInRange} left out of this period</span>}
+        </label>
+      </div>
+
+      <div style={{ ...card, display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <Stat l="Bills" v={rows.length} />
+        <Stat l="Goods" v={rup(sum.sub)} />
+        <Stat l="Delivery" v={rup(sum.fee)} />
+        <Stat l="Collected" v={rup(sum.tot)} c={BRAND.ok} />
+        <Stat l="Cash" v={rup(sum.cod)} />
+        <Stat l="UPI" v={rup(sum.upi)} />
+        {sum.gift > 0 && <Stat l="Free gifts" v={sum.gift} />}
+      </div>
+
+      <div style={{ ...card, display: "grid", gap: 9 }}>
+        <button onClick={salesBook} disabled={!!busy} style={dl(busy === "sales")}>
+          📒 {busy === "sales" ? "Building…" : "Sales for this period (" + rows.length + " bill" + (rows.length === 1 ? "" : "s") + ")"}
+          <div style={{ fontWeight: 500, fontSize: 11.5, opacity: .9, marginTop: 2 }}>Two sheets — one row per bill, and one row per item</div>
+        </button>
+        <button onClick={itemsBook} disabled={!!busy} style={dl(busy === "items")}>
+          🍗 {busy === "items" ? "Building…" : "Items master (" + products.length + " items)"}
+          <div style={{ fontWeight: 500, fontSize: 11.5, opacity: .9, marginTop: 2 }}>Upload once under Items → bulk upload, so you never type the menu in</div>
+        </button>
+        <button onClick={partyBook} disabled={!!busy} style={dl(busy === "parties")}>
+          👥 {busy === "parties" ? "Building…" : "Customers as parties"}
+          <div style={{ fontWeight: 500, fontSize: 11.5, opacity: .9, marginTop: 2 }}>Everyone who has ordered, with mobile and address</div>
+        </button>
+      </div>
+
+      <div style={{ background: "#FFF6E8", border: "1px solid #F0D9A8", borderRadius: 12, padding: "13px 16px", fontSize: 12.5, color: "#7A5B14", lineHeight: 1.6 }}>
+        <b>Before you import:</b> myBillBook takes bulk Excel uploads for <b>Items</b> and <b>Parties</b> — those
+        two files go straight in. It publishes <b>no</b> bulk import for sales invoices, so treat the sales file
+        as a worksheet to raise bills from, or to hand your CA, rather than something to upload. Check your own
+        Sales screen for an import option before assuming either way.
+        <div style={{ marginTop: 7 }}>
+          <b>GST is left at 0 and HSN blank</b> in the items file on purpose. Fresh meat and fish are largely
+          nil-rated but delivery charges may not be — fill those columns in Excel on your CA's word, not mine.
+        </div>
+      </div>
+    </>
+  );
+}
 
 function Campaign({ orders, settings }) {
   const [text, setText] = useState(CAMP_PRESETS[0].text);
@@ -3421,9 +4381,154 @@ function CatManager({ cats, products, onSave, close }) {
   );
 }
 
+/* ---------------- Fish range importer ----------------
+   Seventeen items is a lot to type one modal at a time, so this adds the
+   whole range in one go. Tick only what you can actually source — unsold
+   fish is a loss the same evening, unlike chicken. Prices stay editable
+   here before anything is published. */
+function FishImporter({ products, cats, saveBoth, close }) {
+  /* A fish already on his menu carries HIS price, not my benchmark — otherwise
+     re-opening this to add one more variety and tapping "Tick all" would quietly
+     reset every price he had set by hand. */
+  const mine = React.useMemo(() => {
+    const m = new Map();
+    products.forEach((p) => m.set((p.name || "").trim().toLowerCase(), p));
+    return m;
+  }, [products]);
+  const [rows, setRows] = useState(
+    FISH_SEED.map((f) => {
+      const have = mine.get(f.name.trim().toLowerCase());
+      return have
+        ? { ...f, price: have.price, mrp: have.mrp, on: false, note: "Already on your menu — ₹" + have.price }
+        : { ...f, on: true };
+    })
+  );
+  const upd = (i, patch) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const picked = rows.filter((r) => r.on);
+  const groups = [];
+  rows.forEach((r, i) => {
+    let g = groups.find((x) => x.sub === r.sub);
+    if (!g) { g = { sub: r.sub, items: [] }; groups.push(g); }
+    g.items.push({ ...r, i });
+  });
+
+  const run = () => {
+    if (!picked.length) return alert("Tick at least one fish first.");
+    const bad = picked.find((r) => !Number(r.price));
+    if (bad) return alert(`Set a price for "${bad.name}" before adding it.`);
+    const hasFish = cats.some((c) => c.id === "fish");
+    const nextCats = hasFish ? cats : [...cats, FISH_CAT];
+    const stamp = Date.now();
+    const add = picked.map((r, k) => ({
+      id: "f" + (stamp + k),
+      cat: "fish", sub: r.sub, name: r.name, pcs: r.pcs,
+      gross: r.gross, net: r.net,
+      mrp: Number(r.mrp || r.price), price: Number(r.price),
+      stock: true, preBook: false, emoji: r.emoji, desc: r.desc, img: "",
+    }));
+    /* if the fish is already on the menu, update it in place and keep its photo */
+    const byName = new Map(add.map((p) => [p.name.trim().toLowerCase(), p]));
+    const kept = products.map((p) => {
+      const key = (p.name || "").trim().toLowerCase();
+      const hit = byName.get(key);
+      if (!hit) return p;
+      byName.delete(key);
+      return { ...p, ...hit, id: p.id, img: p.img || "" };
+    });
+    /* one write: the category and its items land together or not at all */
+    saveBoth([...kept, ...Array.from(byName.values())], nextCats);
+    close();
+    alert(
+      `${picked.length} fish added to your menu${hasFish ? "" : ', plus the new "Fish & Seafood" category'}.\n\n` +
+      "They are live on the store now. Two things before you take orders:\n" +
+      "• Check every price against today's market rate.\n" +
+      "• Switch off anything you can't get fresh tomorrow morning."
+    );
+  };
+
+  const cell = { padding: "7px 9px", borderRadius: 8, border: "1.5px solid #e5dfd0", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box", width: "100%" };
+  return (
+    <Modal close={close}>
+      <h3 className="display" style={{ fontWeight: 800, margin: "0 0 4px" }}>🐟 Add the fish range</h3>
+      <p style={{ fontSize: 12.5, color: "#6b675e", margin: "0 0 10px", lineHeight: 1.55 }}>
+        The seventeen varieties that actually move in Chennai, strongest demand first inside each group.
+        Prices are benchmarked to <b>Kasimedu harbour rates</b> plus a cleaning-and-delivery margin —
+        a starting point, <b>not a quote</b>. Set your own before you publish.
+      </p>
+      <div style={{ background: "#FFF6E8", border: "1px solid #F0D9A8", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, color: "#7A5B14", margin: "0 0 12px", lineHeight: 1.55 }}>
+        <b>Tick only what you can source fresh.</b> Fish is not chicken — what you don't sell by evening
+        is a write-off, not tomorrow's stock. Starting with six or seven fast movers beats listing all
+        seventeen and running half of them out of stock.
+      </div>
+      {groups.map((g) => (
+        <div key={g.sub} style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: .5, textTransform: "uppercase", color: BRAND.red, margin: "0 0 6px" }}>{g.sub}</div>
+          <div style={{ display: "grid", gap: 6 }}>
+            {g.items.map((r) => (
+              <div key={r.name} style={{ background: r.on ? "#fff" : "#F4F1EA", opacity: r.on ? 1 : .62, borderRadius: 10, padding: "9px 11px", display: "flex", gap: 9, alignItems: "flex-start", flexWrap: "wrap" }}>
+                <input type="checkbox" checked={r.on} onChange={() => upd(r.i, { on: !r.on })}
+                  style={{ marginTop: 3, width: 17, height: 17, flexShrink: 0, cursor: "pointer" }} />
+                <div style={{ flex: 1, minWidth: 170 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13.5 }}>{r.emoji} {r.name}</div>
+                  <div style={{ fontSize: 11.5, color: "#8a857a", marginTop: 2 }}>
+                    {r.pcs !== "—" ? r.pcs + " · " : ""}net {r.net}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: BRAND.ok, fontWeight: 600, marginTop: 2 }}>{r.note}</div>
+                </div>
+                <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
+                  <label style={{ fontSize: 11, color: "#8a857a", fontWeight: 700 }}>MRP
+                    <input value={r.mrp} inputMode="numeric" onChange={(e) => upd(r.i, { mrp: e.target.value.replace(/[^\d]/g, "") })}
+                      style={{ ...cell, width: 68, marginTop: 2 }} /></label>
+                  <label style={{ fontSize: 11, color: BRAND.red, fontWeight: 800 }}>Sell ₹
+                    <input value={r.price} inputMode="numeric" onChange={(e) => upd(r.i, { price: e.target.value.replace(/[^\d]/g, "") })}
+                      style={{ ...cell, width: 68, marginTop: 2, fontWeight: 800 }} /></label>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "0 0 10px" }}>
+        <button onClick={() => setRows(rows.map((r) => ({ ...r, on: true })))} style={{ background: "#f0ece1", border: "none", borderRadius: 8, padding: "8px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>Tick all</button>
+        <button onClick={() => setRows(rows.map((r) => ({ ...r, on: false })))} style={{ background: "#f0ece1", border: "none", borderRadius: 8, padding: "8px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>Clear all</button>
+      </div>
+      <button onClick={run} disabled={!picked.length}
+        style={{ width: "100%", background: picked.length ? BRAND.red : "#cfc9ba", color: "#fff", border: "none", borderRadius: 10, padding: 13, fontWeight: 800, fontSize: 14, cursor: picked.length ? "pointer" : "not-allowed" }}>
+        Add {picked.length} fish to my menu
+      </button>
+    </Modal>
+  );
+}
+
+/* Fish rates move every single day, and a modal per item means prices quietly
+   go stale — which means selling below cost. This edits straight in the list. */
+function PriceCell({ p, onSave }) {
+  const [v, setV] = useState(String(p.price));
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => { if (!dirty) setV(String(p.price)); }, [p.price, dirty]);
+  const commit = () => {
+    const n = Number(v);
+    setDirty(false);
+    if (!n || n === Number(p.price)) { setV(String(p.price)); return; }
+    onSave(n);
+  };
+  return (
+    <label style={{ fontSize: 10.5, color: "#8a857a", fontWeight: 700, textAlign: "center" }}>
+      ₹ sell
+      <input value={v} inputMode="numeric" title="Change the price and tap away — it saves straight to the store"
+        onChange={(e) => { setDirty(true); setV(e.target.value.replace(/[^\d]/g, "")); }}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
+        style={{ display: "block", width: 72, marginTop: 2, padding: "7px 8px", borderRadius: 8, textAlign: "center",
+          border: "1.5px solid " + (dirty ? BRAND.red : "#e5dfd0"), fontSize: 13.5, fontWeight: 800, fontFamily: "inherit", boxSizing: "border-box" }} />
+    </label>
+  );
+}
+
 /* ---------------- Menu (with photo upload) ---------------- */
-function Menu({ products, save, cats, saveCats }) {
+function Menu({ products, save, cats, saveCats, saveBoth }) {
   const [catOpen, setCatOpen] = useState(false);
+  const [fishOpen, setFishOpen] = useState(false);
   const empty = { id: "", cat: (cats[0] && cats[0].id) || "chicken", name: "", pcs: "", gross: "—", net: "—", mrp: "", price: "", stock: true, preBook: false, sub: "", emoji: "🍗", desc: "", img: "" };
   const [edit, setEdit] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -3452,6 +4557,7 @@ function Menu({ products, save, cats, saveCats }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
         <p style={{ fontSize: 13, color: "#6b675e", margin: 0 }}>Changes here go live on the customer store on their next visit or refresh.</p>
         <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setFishOpen(true)} style={{ background: "#EAF4FB", color: "#1B5E86", border: "1.5px solid #9CC9E3", borderRadius: 10, padding: "10px 16px", fontWeight: 700, cursor: "pointer" }}>🐟 Add fish range</button>
           <button onClick={() => setCatOpen(true)} style={{ background: "#fff", color: BRAND.red, border: "1.5px solid " + BRAND.red, borderRadius: 10, padding: "10px 16px", fontWeight: 700, cursor: "pointer" }}>🗂️ Categories</button>
           <button onClick={() => setEdit(empty)} style={{ background: BRAND.red, color: "#fff", border: "none", borderRadius: 10, padding: "10px 18px", fontWeight: 700, cursor: "pointer" }}>+ Add item</button>
         </div>
@@ -3466,8 +4572,9 @@ function Menu({ products, save, cats, saveCats }) {
               <div style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</div>
               <div style={{ fontSize: 12, color: "#8a857a" }}>
                 {(cats.find((c) => c.id === p.cat) || {}).name || p.cat}
-                {(cats.find((c) => c.id === p.cat) || {}).zoneFree ? <span style={{ color: BRAND.ok, fontWeight: 700 }}> · 📦 All India</span> : null} · {rup(p.price)} <s style={{ opacity: .6 }}>{rup(p.mrp)}</s> {p.img ? "· 📷 photo set" : "· no photo"}</div>
+                {(cats.find((c) => c.id === p.cat) || {}).zoneFree ? <span style={{ color: BRAND.ok, fontWeight: 700 }}> · 📦 All India</span> : null} · MRP <s style={{ opacity: .6 }}>{rup(p.mrp)}</s> {p.img ? "· 📷 photo set" : "· no photo"}</div>
             </div>
+            <PriceCell p={p} onSave={(n) => save(products.map((x) => x.id === p.id ? { ...x, price: n } : x))} />
             <label style={{ fontSize: 12, fontWeight: 600, display: "flex", gap: 5, alignItems: "center", cursor: "pointer" }}>
               <input type="checkbox" checked={p.stock} onChange={() => save(products.map((x) => x.id === p.id ? { ...x, stock: !x.stock } : x))} /> In stock
             </label>
@@ -3535,6 +4642,7 @@ function Menu({ products, save, cats, saveCats }) {
       )}
       {catOpen && <CatManager cats={cats} products={products} close={() => setCatOpen(false)}
         onSave={(c) => { saveCats(c); setCatOpen(false); }} />}
+      {fishOpen && <FishImporter products={products} cats={cats} saveBoth={saveBoth} close={() => setFishOpen(false)} />}
     </>
   );
 }
@@ -4110,6 +5218,26 @@ function Settings({ settings, save, zones, saveZones }) {
       <Field l="Free delivery above (₹)"><input style={inp} type="number" value={f.freeAbove} onChange={(e) => setF({ ...f, freeAbove: Number(e.target.value) })} /></Field>
       <Field l="Serviceable pincodes (comma separated)"><input style={inp} value={f.pincodes} onChange={(e) => setF({ ...f, pincodes: e.target.value })} /></Field>
       <Field l="Store phone"><input style={inp} value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
+
+      <div style={{ background: "#fff", borderRadius: 12, padding: 14, borderLeft: "4px solid #8E6A1F" }}>
+        <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 2 }}>🧾 What prints on the customer bill</div>
+        <div style={{ fontSize: 12.5, color: "#6b675e", marginBottom: 10, lineHeight: 1.55 }}>
+          These appear in the bill header. Leave GSTIN blank if you are not registered — the bill then
+          says “bill of supply”, which is the correct wording. The bill is numbered from the order
+          number, never its own series, so it can't clash with myBillBook's invoice numbers.
+        </div>
+        <div style={{ display: "grid", gap: 9 }}>
+          <Field l="Shop address (one line)">
+            <input style={inp} value={f.shopAddr || ""} placeholder="Kundrathur, Chennai 600069"
+              onChange={(e) => setF({ ...f, shopAddr: e.target.value })} /></Field>
+          <Field l="FSSAI licence number (optional)">
+            <input style={inp} value={f.fssai || ""} placeholder="14-digit number on your licence"
+              onChange={(e) => setF({ ...f, fssai: e.target.value })} /></Field>
+          <Field l="GSTIN (leave blank if not registered)">
+            <input style={inp} value={f.gstin || ""} placeholder="33XXXXXXXXXXXZX"
+              onChange={(e) => setF({ ...f, gstin: e.target.value })} /></Field>
+        </div>
+      </div>
       <Field l="Same-day slot cut-off (hours before slot)"><input style={inp} type="number" value={f.cutoffHours} onChange={(e) => setF({ ...f, cutoffHours: Number(e.target.value) })} /></Field>
       <div style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600 }}>
         Delivery days — customers can order only for these
