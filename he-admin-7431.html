@@ -178,6 +178,28 @@ const BRAND = {
 };
 const XLSX_SRC = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
 
+/* The same stock photo library the customer site uses, kept byte-identical
+   to index.src.html. Products that were never given an uploaded photo still
+   show a picture on the website via this map, so the till has to use the
+   same fallback or it shows bare emoji for items the customer sees in full
+   colour. imgOf() is the single place that decides which picture wins. */
+const IMGS = {
+  p1: "https://images.unsplash.com/photo-1587593810167-a84920ea0781?w=500&q=70",
+  p2: "https://images.unsplash.com/photo-1602470520998-f4a52199a3d6?w=500&q=70",
+  p3: "https://images.unsplash.com/photo-1588347818036-558601350947?w=500&q=70",
+  p4: "https://images.unsplash.com/photo-1604503468506-a8da13d82791?w=500&q=70",
+  p5: "https://images.unsplash.com/photo-1606728035253-49e8a23146de?w=500&q=70",
+  p7: "https://images.unsplash.com/photo-1582722872445-44dc5f7e3c8f?w=500&q=70",
+  p8: "https://images.unsplash.com/photo-1598965402089-897ce52e8355?w=500&q=70",
+  p9: "https://images.unsplash.com/photo-1548550023-2bdb3c5beed7?w=500&q=70",
+  p11: "https://images.unsplash.com/photo-1612871689353-cccf581d667b?w=500&q=70",
+  p12: "https://images.unsplash.com/photo-1603360946369-dc9bb6258143?w=500&q=70",
+  p13: "https://images.unsplash.com/photo-1547592166-23ac45744acd?w=500&q=70",
+  p14: "https://images.unsplash.com/photo-1587593810167-a84920ea0781?w=500&q=70",
+  p15: "https://images.unsplash.com/photo-1589302168068-964664d93dc0?w=500&q=70"
+};
+const imgOf = p => p.img || IMGS[p.id] || "";
+
 /* ================= Stock, yield and day-book maths =================
    The one thing no billing package models for a meat shop: a conversion
    that LOSES weight. You buy 1.1 kg of live bird and sell 900 g dressed;
@@ -315,6 +337,35 @@ function dayBook(stock, orders, products, from, to) {
   }));
   const expenses = (stock.expenses || []).filter(e => e.date >= from && e.date <= to).reduce((a, e) => a + nk(e.amount), 0);
   const counter = sold.filter(o => o.src === "counter");
+
+  /* Split by channel. Sales and cost of goods belong to a channel cleanly.
+     Wastage and overheads do NOT — a kilo that spoiled was never destined
+     for the shop counter or the delivery bag in particular — so they stay
+     in a shared block instead of being carved up by some invented ratio
+     that would make one channel look better than it is. */
+  const side = list => {
+    const rev = list.reduce((a, o) => a + nk(o.total), 0);
+    const gds = list.reduce((a, o) => a + nk(o.subtotal), 0);
+    const del = list.reduce((a, o) => a + nk(o.delFee), 0);
+    let c = 0;
+    list.forEach(o => {
+      const d = o.slotDate || (o.placedAt || "").slice(0, 10);
+      const u = orderUsage(o, products);
+      Object.keys(u).forEach(m => {
+        c += u[m] * matCost(stock, m, d);
+      });
+    });
+    return {
+      bills: list.length,
+      revenue: rev,
+      goods: gds,
+      delivery: del,
+      cogs: c,
+      margin: rev - c,
+      avg: list.length ? rev / list.length : 0,
+      unmapped: list.filter(o => !Object.keys(orderUsage(o, products)).length).length
+    };
+  };
   return {
     bills: sold.length,
     counterBills: counter.length,
@@ -325,7 +376,10 @@ function dayBook(stock, orders, products, from, to) {
     waste,
     expenses,
     net: revenue - cogs - waste - expenses,
-    unmapped: sold.filter(o => !Object.keys(orderUsage(o, products)).length).length
+    unmapped: sold.filter(o => !Object.keys(orderUsage(o, products)).length).length,
+    online: side(sold.filter(o => o.src !== "counter")),
+    counter: side(counter),
+    shared: waste + expenses
   };
 }
 const DEFAULT_CATS = [{
@@ -1030,7 +1084,7 @@ function AdminApp() {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit"
-  })}` : "Connecting…", " \xB7 v8.3"), /*#__PURE__*/React.createElement("button", {
+  })}` : "Connecting…", " \xB7 v8.4"), /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       audioCtx();
       setSound(!sound);
@@ -6158,8 +6212,8 @@ function Counter({
         placeItems: "center",
         overflow: "hidden"
       }
-    }, p.img ? /*#__PURE__*/React.createElement("img", {
-      src: p.img,
+    }, imgOf(p) ? /*#__PURE__*/React.createElement("img", {
+      src: imgOf(p),
       alt: "",
       loading: "lazy",
       style: {
@@ -6342,6 +6396,41 @@ function DayBook({
     padding: "15px 17px",
     marginBottom: 13
   };
+  const th = {
+    fontSize: 11,
+    fontWeight: 800,
+    letterSpacing: .4,
+    textTransform: "uppercase",
+    color: "#8a857a",
+    padding: "10px 9px 7px",
+    borderBottom: "1px solid #ece6d9",
+    whiteSpace: "nowrap"
+  };
+  const td = {
+    fontSize: 13,
+    padding: "7px 9px",
+    whiteSpace: "nowrap"
+  };
+  const Num = ({
+    v,
+    bold,
+    dim,
+    small,
+    plain,
+    top,
+    c
+  }) => /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...td,
+      textAlign: "right",
+      fontWeight: bold ? 800 : 700,
+      fontSize: small ? 11.5 : bold ? 15 : 13.5,
+      color: c || (dim || small ? "#8a857a" : BRAND.ink),
+      borderTop: top ? "1.5px solid #e5dfd0" : "none",
+      paddingTop: small ? 0 : undefined,
+      whiteSpace: "nowrap"
+    }
+  }, plain ? v : (v < 0 ? "− " : "") + rup(Math.round(Math.abs(v))));
   const Line = ({
     l,
     v,
@@ -6431,16 +6520,126 @@ function DayBook({
       cursor: "pointer"
     }
   }, l))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...card,
+      padding: "4px 6px 10px",
+      overflowX: "auto"
+    }
+  }, /*#__PURE__*/React.createElement("table", {
+    style: {
+      width: "100%",
+      borderCollapse: "collapse",
+      minWidth: 330
+    }
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
+    style: th
+  }), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...th,
+      textAlign: "right"
+    }
+  }, "\uD83D\uDEF5 Online"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...th,
+      textAlign: "right"
+    }
+  }, "\uD83D\uDED2 Counter"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...th,
+      textAlign: "right",
+      color: BRAND.ink
+    }
+  }, "Total"))), /*#__PURE__*/React.createElement("tbody", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
+    style: td
+  }, "Bills"), /*#__PURE__*/React.createElement(Num, {
+    v: b.online.bills,
+    plain: true
+  }), /*#__PURE__*/React.createElement(Num, {
+    v: b.counter.bills,
+    plain: true
+  }), /*#__PURE__*/React.createElement(Num, {
+    v: b.bills,
+    plain: true,
+    bold: true
+  })), /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
+    style: td
+  }, "Sales"), /*#__PURE__*/React.createElement(Num, {
+    v: b.online.revenue
+  }), /*#__PURE__*/React.createElement(Num, {
+    v: b.counter.revenue
+  }), /*#__PURE__*/React.createElement(Num, {
+    v: b.revenue,
+    bold: true
+  })), /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...td,
+      color: "#6b675e"
+    }
+  }, "Cost of what you sold"), /*#__PURE__*/React.createElement(Num, {
+    v: -b.online.cogs,
+    dim: true
+  }), /*#__PURE__*/React.createElement(Num, {
+    v: -b.counter.cogs,
+    dim: true
+  }), /*#__PURE__*/React.createElement(Num, {
+    v: -b.cogs,
+    dim: true
+  })), /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...td,
+      fontWeight: 800,
+      borderTop: "1.5px solid #e5dfd0"
+    }
+  }, "Money left over"), /*#__PURE__*/React.createElement(Num, {
+    v: b.online.margin,
+    top: true,
+    bold: true,
+    c: b.online.margin >= 0 ? BRAND.ok : BRAND.danger
+  }), /*#__PURE__*/React.createElement(Num, {
+    v: b.counter.margin,
+    top: true,
+    bold: true,
+    c: b.counter.margin >= 0 ? BRAND.ok : BRAND.danger
+  }), /*#__PURE__*/React.createElement(Num, {
+    v: b.revenue - b.cogs,
+    top: true,
+    bold: true,
+    c: BRAND.ok
+  })), /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...td,
+      fontSize: 11.5,
+      color: "#8a857a",
+      paddingTop: 0
+    }
+  }, "Average bill"), /*#__PURE__*/React.createElement(Num, {
+    v: b.online.avg,
+    small: true
+  }), /*#__PURE__*/React.createElement(Num, {
+    v: b.counter.avg,
+    small: true
+  }), /*#__PURE__*/React.createElement(Num, {
+    v: b.bills ? b.revenue / b.bills : 0,
+    small: true
+  }))))), /*#__PURE__*/React.createElement("div", {
     style: card
-  }, /*#__PURE__*/React.createElement(Line, {
-    l: "Sales",
-    v: rup(Math.round(b.revenue)),
-    note: `· ${b.bills} bill${b.bills === 1 ? "" : "s"}${b.counterBills ? ", " + b.counterBills + " at the counter" : ""}`
-  }), /*#__PURE__*/React.createElement(Line, {
-    l: "Cost of what you sold",
-    v: "− " + rup(Math.round(b.cogs)),
-    c: "#6b675e"
-  }), /*#__PURE__*/React.createElement(Line, {
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      fontWeight: 800,
+      letterSpacing: .4,
+      textTransform: "uppercase",
+      color: "#8a857a",
+      marginBottom: 2
+    }
+  }, "Costs that belong to both"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: "#8a857a",
+      marginBottom: 7,
+      lineHeight: 1.5
+    }
+  }, "A kilo that spoiled was not meant for the counter or the delivery bag in particular, so these are not split \u2014 carving them up by a made-up ratio would flatter one side."), /*#__PURE__*/React.createElement(Line, {
     l: "Wastage",
     v: "− " + rup(Math.round(b.waste)),
     c: b.waste > 0 ? BRAND.danger : "#6b675e"
@@ -10283,8 +10482,8 @@ function Menu({
       placeItems: "center",
       fontSize: 24
     }
-  }, p.img ? /*#__PURE__*/React.createElement("img", {
-    src: p.img,
+  }, imgOf(p) ? /*#__PURE__*/React.createElement("img", {
+    src: imgOf(p),
     alt: "",
     style: {
       width: "100%",
