@@ -93,7 +93,25 @@ FIREBASE_RTDB_URL ? {
   async list() { return { keys: [] }; },
 };
 </script>
-<style>html,body{margin:0;padding:0}</style>
+<style>
+html,body{margin:0;padding:0}
+/* Kept in <head>, NOT in the loader markup — the loader element is removed
+   from the page once the app mounts, and anything styled from inside it
+   loses its rules the moment that happens. */
+  /* Counter till: on a phone the bill column lands below a long product grid,
+     so the running total and Save button are off-screen and the till looks
+     dead. Narrow screens get a fixed bar instead that opens the bill. */
+  .he-till-side{flex:0 1 330px;min-width:280px;position:sticky;top:12px}
+  .he-till-bar{display:none}
+  @media (max-width:900px){
+    .he-till-side{display:none}
+    .he-till-bar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:70;align-items:center;gap:10px;
+      padding:11px 14px;background:#241E1A;color:#fff;box-shadow:0 -6px 22px rgba(0,0,0,.26)}
+    .he-till-sheet{position:fixed;inset:0;z-index:80;background:rgba(20,16,14,.5);display:flex;align-items:flex-end}
+    .he-till-sheet>div{background:#F4F0E6;width:100%;max-height:88vh;overflow:auto;border-radius:18px 18px 0 0;padding:14px}
+    .he-till-pad{padding-bottom:74px}
+  }
+</style>
 </head>
 <body>
 <div id="root">
@@ -1012,7 +1030,7 @@ function AdminApp() {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit"
-  })}` : "Connecting…", " \xB7 v8.2"), /*#__PURE__*/React.createElement("button", {
+  })}` : "Connecting…", " \xB7 v8.3"), /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       audioCtx();
       setSound(!sound);
@@ -5777,6 +5795,7 @@ function Counter({
   const [cat, setCat] = useState("all");
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState(null);
+  const [sheet, setSheet] = useState(false);
   const inStock = products.filter(p => p.stock !== false);
   const shown = inStock.filter(p => (cat === "all" || p.cat === cat) && (!q.trim() || (p.name || "").toLowerCase().includes(q.trim().toLowerCase())));
   const lines = Object.keys(cart).filter(k => cart[k] > 0).map(id => {
@@ -5829,6 +5848,7 @@ function Counter({
       setCart({});
       setName("");
       setPhone("");
+      setSheet(false);
     }
   };
   const card = {
@@ -5902,113 +5922,10 @@ function Counter({
       cursor: "pointer"
     }
   }, "Next customer \u2192")));
-  return /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 13,
-      alignItems: "flex-start",
-      flexWrap: "wrap"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: "1 1 380px",
-      minWidth: 300
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...card,
-      display: "flex",
-      gap: 7,
-      flexWrap: "wrap"
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    value: q,
-    onChange: e => setQ(e.target.value),
-    placeholder: "Search the menu\u2026",
-    style: {
-      ...inp,
-      flex: 1,
-      minWidth: 140
-    }
-  }), /*#__PURE__*/React.createElement("select", {
-    value: cat,
-    onChange: e => setCat(e.target.value),
-    style: {
-      ...inp,
-      width: "auto"
-    }
-  }, /*#__PURE__*/React.createElement("option", {
-    value: "all"
-  }, "All"), cats.map(c => /*#__PURE__*/React.createElement("option", {
-    key: c.id,
-    value: c.id
-  }, c.name)))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "grid",
-      gridTemplateColumns: "repeat(auto-fill,minmax(152px,1fr))",
-      gap: 8
-    }
-  }, shown.map(p => /*#__PURE__*/React.createElement("button", {
-    key: p.id,
-    onClick: () => bump(p.id, 1),
-    style: {
-      background: cart[p.id] ? BRAND.creamSoft : "#fff",
-      border: "1.5px solid " + (cart[p.id] ? BRAND.red : "#e9e3d6"),
-      borderRadius: 11,
-      padding: "11px 12px",
-      textAlign: "left",
-      cursor: "pointer",
-      fontFamily: "inherit",
-      position: "relative"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 19
-    }
-  }, p.emoji), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12.5,
-      fontWeight: 700,
-      lineHeight: 1.3,
-      margin: "3px 0"
-    }
-  }, p.name), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 13.5,
-      fontWeight: 800,
-      color: BRAND.red
-    }
-  }, rup(nk(p.price))), cart[p.id] > 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: "absolute",
-      top: 7,
-      right: 7,
-      background: BRAND.red,
-      color: "#fff",
-      borderRadius: 999,
-      minWidth: 22,
-      height: 22,
-      fontSize: 12,
-      fontWeight: 800,
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      padding: "0 5px"
-    }
-  }, cart[p.id]))), !shown.length && /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: "#8a857a",
-      fontSize: 13,
-      padding: 12
-    }
-  }, "Nothing matches."))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: "0 1 330px",
-      minWidth: 280,
-      position: "sticky",
-      top: 12
-    }
-  }, closedToday && /*#__PURE__*/React.createElement("div", {
+
+  /* One bill panel, shown in the side column on a laptop and inside the
+     bottom sheet on a phone — built once so the two can never drift apart. */
+  const bill = /*#__PURE__*/React.createElement(React.Fragment, null, closedToday && /*#__PURE__*/React.createElement("div", {
     style: {
       background: "#FFF6E8",
       border: "1px solid #F0D9A8",
@@ -6033,7 +5950,7 @@ function Counter({
       fontSize: 13,
       padding: "10px 0"
     }
-  }, "Tap items on the left."), lines.map(l => /*#__PURE__*/React.createElement("div", {
+  }, "Tap items to add them."), lines.map(l => /*#__PURE__*/React.createElement("div", {
     key: l.p.id,
     style: {
       display: "flex",
@@ -6051,31 +5968,33 @@ function Counter({
   }, l.p.name), /*#__PURE__*/React.createElement("button", {
     onClick: () => bump(l.p.id, -1),
     style: {
-      width: 26,
-      height: 26,
+      width: 30,
+      height: 30,
       borderRadius: 7,
       border: "1px solid #e5dfd0",
       background: "#fff",
       cursor: "pointer",
-      fontWeight: 800
+      fontWeight: 800,
+      fontSize: 16
     }
   }, "\u2212"), /*#__PURE__*/React.createElement("span", {
     style: {
-      minWidth: 18,
+      minWidth: 20,
       textAlign: "center",
       fontWeight: 800,
-      fontSize: 13
+      fontSize: 14
     }
   }, l.qty), /*#__PURE__*/React.createElement("button", {
     onClick: () => bump(l.p.id, 1),
     style: {
-      width: 26,
-      height: 26,
+      width: 30,
+      height: 30,
       borderRadius: 7,
       border: "1px solid #e5dfd0",
       background: "#fff",
       cursor: "pointer",
-      fontWeight: 800
+      fontWeight: 800,
+      fontSize: 16
     }
   }, "+"), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -6123,9 +6042,9 @@ function Counter({
       color: pay === k ? "#fff" : BRAND.ink,
       border: "1.5px solid " + (pay === k ? BRAND.ink : "#e5dfd0"),
       borderRadius: 9,
-      padding: "10px 0",
+      padding: "11px 0",
       fontWeight: 700,
-      fontSize: 13,
+      fontSize: 13.5,
       cursor: "pointer"
     }
   }, l))), /*#__PURE__*/React.createElement("button", {
@@ -6151,7 +6070,239 @@ function Counter({
       cursor: "pointer",
       textDecoration: "underline"
     }
-  }, "Clear"))))));
+  }, "Clear")))));
+  const step = {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    border: "1.5px solid #e5dfd0",
+    background: "#fff",
+    cursor: "pointer",
+    fontWeight: 800,
+    fontSize: 18,
+    lineHeight: 1,
+    fontFamily: "inherit",
+    flexShrink: 0
+  };
+  const count = lines.reduce((a, l) => a + l.qty, 0);
+  return /*#__PURE__*/React.createElement("div", {
+    className: lines.length ? "he-till-pad" : "",
+    style: {
+      display: "flex",
+      gap: 13,
+      alignItems: "flex-start",
+      flexWrap: "wrap"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: "1 1 380px",
+      minWidth: 280
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...card,
+      display: "flex",
+      gap: 7,
+      flexWrap: "wrap"
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    value: q,
+    onChange: e => setQ(e.target.value),
+    placeholder: "Search the menu\u2026",
+    style: {
+      ...inp,
+      flex: 1,
+      minWidth: 140
+    }
+  }), /*#__PURE__*/React.createElement("select", {
+    value: cat,
+    onChange: e => setCat(e.target.value),
+    style: {
+      ...inp,
+      width: "auto"
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "all"
+  }, "All"), cats.map(c => /*#__PURE__*/React.createElement("option", {
+    key: c.id,
+    value: c.id
+  }, c.name)))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))",
+      gap: 9
+    }
+  }, shown.map(p => {
+    const n = cart[p.id] || 0;
+    return /*#__PURE__*/React.createElement("div", {
+      key: p.id,
+      style: {
+        background: n ? BRAND.creamSoft : "#fff",
+        border: "1.5px solid " + (n ? BRAND.red : "#e9e3d6"),
+        borderRadius: 12,
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      onClick: () => bump(p.id, 1),
+      style: {
+        cursor: "pointer"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        width: "100%",
+        aspectRatio: "4 / 3",
+        background: "#F1ECE1",
+        display: "grid",
+        placeItems: "center",
+        overflow: "hidden"
+      }
+    }, p.img ? /*#__PURE__*/React.createElement("img", {
+      src: p.img,
+      alt: "",
+      loading: "lazy",
+      style: {
+        width: "100%",
+        height: "100%",
+        objectFit: "cover",
+        display: "block"
+      }
+    }) : /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 34
+      }
+    }, p.emoji || "🍗")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: "8px 10px 0"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12.5,
+        fontWeight: 700,
+        lineHeight: 1.3
+      }
+    }, p.name), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 14,
+        fontWeight: 800,
+        color: BRAND.red,
+        marginTop: 2
+      }
+    }, rup(nk(p.price))))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: "8px 10px 10px",
+        marginTop: "auto"
+      }
+    }, n === 0 ? /*#__PURE__*/React.createElement("button", {
+      onClick: () => bump(p.id, 1),
+      style: {
+        width: "100%",
+        background: BRAND.red,
+        color: "#fff",
+        border: "none",
+        borderRadius: 9,
+        padding: "9px 0",
+        fontWeight: 800,
+        fontSize: 13,
+        cursor: "pointer",
+        fontFamily: "inherit"
+      }
+    }, "+ Add") : /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: () => bump(p.id, -1),
+      style: step
+    }, "\u2212"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1,
+        textAlign: "center",
+        fontWeight: 800,
+        fontSize: 16
+      }
+    }, n), /*#__PURE__*/React.createElement("button", {
+      onClick: () => bump(p.id, 1),
+      style: {
+        ...step,
+        borderColor: BRAND.red,
+        color: BRAND.red
+      }
+    }, "+"))));
+  }), !shown.length && /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#8a857a",
+      fontSize: 13,
+      padding: 12
+    }
+  }, "Nothing matches."))), /*#__PURE__*/React.createElement("div", {
+    className: "he-till-side"
+  }, bill), lines.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "he-till-bar",
+    onClick: () => setSheet(true)
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      opacity: .75
+    }
+  }, count, " item", count === 1 ? "" : "s"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 19,
+      fontWeight: 800
+    }
+  }, rup(total))), /*#__PURE__*/React.createElement("button", {
+    onClick: e => {
+      e.stopPropagation();
+      setSheet(true);
+    },
+    style: {
+      background: BRAND.red,
+      color: "#fff",
+      border: "none",
+      borderRadius: 10,
+      padding: "12px 20px",
+      fontWeight: 800,
+      fontSize: 14.5,
+      cursor: "pointer",
+      fontFamily: "inherit"
+    }
+  }, "Review & save \u2192")), sheet && /*#__PURE__*/React.createElement("div", {
+    className: "he-till-sheet",
+    onClick: () => setSheet(false)
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: e => e.stopPropagation()
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 800,
+      fontSize: 15
+    }
+  }, "Finish this bill"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setSheet(false),
+    style: {
+      background: "#e9e3d6",
+      border: "none",
+      borderRadius: 999,
+      width: 32,
+      height: 32,
+      fontSize: 17,
+      cursor: "pointer",
+      fontWeight: 700
+    }
+  }, "\u2715")), bill)));
 }
 
 /* ---------------- Day book: what you actually made ---------------- */
